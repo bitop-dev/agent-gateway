@@ -36,6 +36,7 @@ curl -X POST http://localhost:8080/v1/tasks \
 | `/v1/tasks` | POST | `tasks:write` | Submit a task (sync or async) |
 | `/v1/tasks` | GET | `tasks:read` | List tasks (filter by `?status=`) |
 | `/v1/tasks/{id}` | GET | `tasks:read` | Get task details + result |
+| `/v1/tasks/parallel` | POST | `tasks:write` | Submit multiple tasks for concurrent execution across workers |
 
 Submit a task:
 ```json
@@ -118,21 +119,52 @@ POST /v1/schedules
 }
 ```
 
-### Discovery
+### Events and discovery
 
 | Endpoint | Method | Auth | Description |
 |---|---|---|---|
 | `/v1/agents` | GET | `tasks:read` | List available agents (workers + registry) |
+| `/v1/events` | GET | `tasks:read` | SSE event stream (real-time) |
 | `/v1/health` | GET | none | Health check |
+| `/` | GET | none | Web dashboard |
+
+### Retries
+
+The gateway automatically retries failed tasks on transient errors (timeouts,
+connection refused, 502/503/504) up to 2 times, picking a different worker
+each retry with exponential backoff.
+
+### Parallel execution
+
+```json
+POST /v1/tasks/parallel
+{
+  "tasks": [
+    {"profile": "researcher", "task": "Anthropic news"},
+    {"profile": "researcher", "task": "OpenAI news"}
+  ]
+}
+```
+
+Each task is dispatched to a different worker. Wall time equals the slowest
+task, not the sum. Workers with `GATEWAY_URL` set dispatch `agent/spawn-parallel`
+calls through the gateway for true k8s-wide parallelism.
 
 ## Configuration
 
 ```
 --addr          Listen address (default :8080)
 --dsn           PostgreSQL connection string (or DATABASE_URL env)
+--nats          NATS URL for event bus (or NATS_URL env, optional)
 --registry      agent-registry URL for profile discovery
 --admin-key     Admin API key (or ADMIN_KEY env)
 ```
+
+## NATS events
+
+When configured, publishes events to NATS for real-time monitoring:
+`agent.task.submitted`, `agent.task.completed`, `agent.task.failed`,
+`agent.task.retry`, `agent.worker.joined`, `agent.webhook.fired`
 
 ## Docker
 
