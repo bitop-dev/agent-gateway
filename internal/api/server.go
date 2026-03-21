@@ -59,6 +59,9 @@ func (s *Server) Handler(webFS http.FileSystem) http.Handler {
 	mux.HandleFunc("/v1/schedules", s.requireAuth(s.handleSchedules, "admin"))
 	mux.HandleFunc("/v1/webhooks", s.requireAuth(s.handleWebhookCRUD, "admin"))
 
+	// Plugins (proxy to registry)
+	mux.HandleFunc("/v1/plugins", s.requireAuth(s.handlePlugins, "tasks:read"))
+
 	// Memory
 	mux.HandleFunc("/v1/memory", s.requireAuth(s.handleMemory, "tasks:write", "tasks:read"))
 
@@ -482,6 +485,56 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"agents": agents, "count": len(agents)})
+}
+
+// ── Plugins ───────────────────────────────────────────────────────────────────
+
+func (s *Server) handlePlugins(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	type pluginInfo struct {
+		Name        string `json:"name"`
+		Version     string `json:"version"`
+		Description string `json:"description,omitempty"`
+		Category    string `json:"category,omitempty"`
+		Runtime     string `json:"runtime,omitempty"`
+		Source      string `json:"source"`
+	}
+
+	var plugins []pluginInfo
+
+	if s.RegistryURL != "" {
+		client := &http.Client{Timeout: 5 * time.Second}
+		resp, err := client.Get(strings.TrimRight(s.RegistryURL, "/") + "/v1/index.json")
+		if err == nil && resp.StatusCode == http.StatusOK {
+			var index struct {
+				Packages []struct {
+					Name          string `json:"name"`
+					LatestVersion string `json:"latestVersion"`
+					Description   string `json:"description"`
+					Category      string `json:"category"`
+					Runtime       string `json:"runtime"`
+				} `json:"packages"`
+			}
+			json.NewDecoder(resp.Body).Decode(&index)
+			resp.Body.Close()
+			for _, p := range index.Packages {
+				plugins = append(plugins, pluginInfo{
+					Name:        p.Name,
+					Version:     p.LatestVersion,
+					Description: p.Description,
+					Category:    p.Category,
+					Runtime:     p.Runtime,
+					Source:      "registry",
+				})
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"plugins": plugins, "count": len(plugins)})
 }
 
 // ── Costs ─────────────────────────────────────────────────────────────────────

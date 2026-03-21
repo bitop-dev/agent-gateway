@@ -44,7 +44,7 @@
     memLoading = true;
     try {
       const resp = await api.getMemory(selectedProfile);
-      memories = resp.memories || [];
+      memories = resp.entries || [];
     } catch (e) {
       console.error("Failed to load memory:", e);
       memories = [];

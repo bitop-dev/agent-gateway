@@ -97,7 +97,7 @@ func (r *Router) Dispatch(ctx context.Context, task *db.Task) (*db.Task, error) 
 
 		// Success.
 		totalDuration := int(time.Since(totalStart).Milliseconds())
-		r.DB.UpdateTaskCompleted(ctx, task.ID, result.Output, 0, totalDuration)
+		r.DB.UpdateTaskCompleted(ctx, task.ID, result.Output, result.Model, 0, totalDuration, result.InputTokens, result.OutputTokens)
 
 		// Record cost if worker reported token usage.
 		if result.InputTokens > 0 || result.OutputTokens > 0 {

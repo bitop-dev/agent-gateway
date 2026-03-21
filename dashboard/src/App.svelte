@@ -21,6 +21,7 @@
   import TaskNew from "$lib/components/pages/task-new.svelte";
   import Workers from "$lib/components/pages/workers.svelte";
   import Agents from "$lib/components/pages/agents.svelte";
+  import Plugins from "$lib/components/pages/plugins.svelte";
   import Costs from "$lib/components/pages/costs.svelte";
   import Memory from "$lib/components/pages/memory.svelte";
   import Webhooks from "$lib/components/pages/webhooks.svelte";
@@ -117,6 +118,8 @@
         <Workers />
       {:else if $currentPath === "/agents"}
         <Agents />
+      {:else if $currentPath === "/plugins"}
+        <Plugins />
       {:else if $currentPath === "/costs"}
         <Costs />
       {:else if $currentPath === "/memory"}

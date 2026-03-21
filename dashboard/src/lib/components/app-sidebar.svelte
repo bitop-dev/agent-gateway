@@ -7,6 +7,7 @@
   import BrainIcon from "@lucide/svelte/icons/brain";
   import WebhookIcon from "@lucide/svelte/icons/webhook";
   import ClockIcon from "@lucide/svelte/icons/clock";
+  import PuzzleIcon from "@lucide/svelte/icons/puzzle";
   import * as Sidebar from "$lib/components/ui/sidebar/index.js";
   import { currentPath, navigate } from "$lib/router";
 
@@ -15,6 +16,7 @@
     { title: "Tasks", href: "/tasks", icon: ListTodoIcon },
     { title: "Workers", href: "/workers", icon: ServerIcon },
     { title: "Agents", href: "/agents", icon: BotIcon },
+    { title: "Plugins", href: "/plugins", icon: PuzzleIcon },
     { title: "Costs", href: "/costs", icon: DollarSignIcon },
     { title: "Memory", href: "/memory", icon: BrainIcon },
     { title: "Webhooks", href: "/webhooks", icon: WebhookIcon },
@@ -29,7 +31,7 @@
 
 <Sidebar.Root>
   <Sidebar.Header>
-    <div class="flex items-center gap-2 px-2 py-2">
+    <div class="flex items-center gap-2 px-2 py-3">
       <BotIcon class="h-6 w-6 text-primary" />
       <span class="text-lg font-semibold">Agent Platform</span>
     </div>
@@ -37,16 +39,18 @@
   <Sidebar.Content>
     <Sidebar.Group>
       <Sidebar.GroupContent>
-        <Sidebar.Menu>
+        <Sidebar.Menu class="gap-1">
           {#each navItems as item (item.title)}
             <Sidebar.MenuItem>
               <Sidebar.MenuButton
+                size="lg"
                 isActive={isActive(item.href, $currentPath)}
               >
                 {#snippet child({ props })}
                   <a
                     href="#{item.href}"
                     {...props}
+                    class="{props.class} py-3"
                     onclick={(e: MouseEvent) => {
                       e.preventDefault();
                       navigate(item.href);
@@ -64,8 +68,8 @@
     </Sidebar.Group>
   </Sidebar.Content>
   <Sidebar.Footer>
-    <div class="px-2 py-2 text-xs text-muted-foreground">
-      Agent Platform v0.4.5
+    <div class="px-2 py-3 text-xs text-muted-foreground">
+      Agent Platform v0.5.2
     </div>
   </Sidebar.Footer>
 </Sidebar.Root>

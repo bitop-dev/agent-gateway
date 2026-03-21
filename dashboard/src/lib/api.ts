@@ -85,6 +85,15 @@ export interface ModelPricing {
   source: string;
 }
 
+export interface Plugin {
+  name: string;
+  version: string;
+  description?: string;
+  category?: string;
+  runtime?: string;
+  source: string;
+}
+
 export interface HealthResponse {
   status: string;
   workers: number;
@@ -198,10 +207,14 @@ export class AgentAPI {
   async getMemory(
     profile: string,
     key?: string
-  ): Promise<{ memories: MemoryEntry[] }> {
+  ): Promise<{ entries: MemoryEntry[] }> {
     const params = new URLSearchParams({ profile });
     if (key) params.set("key", key);
-    return this.get(`/v1/memory?${params}`);
+    const resp = await this.get<any>(`/v1/memory?${params}`);
+    // Normalize: gateway returns { entries: [...] } or single { key, value }
+    if (resp.entries) return { entries: resp.entries };
+    if (resp.key) return { entries: [resp as MemoryEntry] };
+    return { entries: [] };
   }
 
   async setMemory(profile: string, key: string, value: string): Promise<void> {
@@ -245,6 +258,11 @@ export class AgentAPI {
 
   async deleteSchedule(id: string): Promise<void> {
     await this.del(`/v1/schedules?id=${id}`);
+  }
+
+  // Plugins
+  async getPlugins(): Promise<{ plugins: Plugin[] }> {
+    return this.get("/v1/plugins");
   }
 
   // Health

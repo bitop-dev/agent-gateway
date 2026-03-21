@@ -112,3 +112,11 @@ CREATE TABLE IF NOT EXISTS agent_memory (
   updated_at  TIMESTAMPTZ DEFAULT now(),
   UNIQUE(profile, key)
 );
+
+-- Add token columns to tasks (idempotent)
+DO $$ BEGIN
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS model TEXT;
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS input_tokens INTEGER DEFAULT 0;
+  ALTER TABLE tasks ADD COLUMN IF NOT EXISTS output_tokens INTEGER DEFAULT 0;
+EXCEPTION WHEN others THEN NULL;
+END $$;
