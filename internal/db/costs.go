@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -67,17 +68,43 @@ func SyncPricingFromModelsDev() (int, error) {
 		return 0, fmt.Errorf("decode: %w", err)
 	}
 
-	count := 0
-	for _, provider := range providers {
+	// First pass: collect all pricing, keyed by model ID.
+	// Track which provider each price came from so we can prefer originals.
+	type entry struct {
+		provider string
+		pricing  ModelPricing
+	}
+	all := make(map[string][]entry)
+	for providerID, provider := range providers {
 		for _, model := range provider.Models {
 			if model.Cost.Input > 0 || model.Cost.Output > 0 {
-				Pricing[model.ID] = ModelPricing{
-					Input:  model.Cost.Input,
-					Output: model.Cost.Output,
-				}
-				count++
+				all[model.ID] = append(all[model.ID], entry{
+					provider: providerID,
+					pricing:  ModelPricing{Input: model.Cost.Input, Output: model.Cost.Output},
+				})
 			}
 		}
+	}
+
+	// Second pass: for each model, prefer the original provider's price.
+	// Original = provider whose name is a prefix of the model family.
+	originals := map[string]string{
+		"openai": "gpt", "anthropic": "claude", "google": "gemini",
+		"meta": "llama", "mistralai": "mistral", "cohere": "command",
+		"nvidia": "nemotron", "deepseek": "deepseek", "qwen": "qwen",
+	}
+	count := 0
+	for modelID, entries := range all {
+		best := entries[0] // default to first seen
+		for _, e := range entries {
+			for providerPrefix, modelPrefix := range originals {
+				if strings.HasPrefix(e.provider, providerPrefix) && strings.Contains(strings.ToLower(modelID), modelPrefix) {
+					best = e
+				}
+			}
+		}
+		Pricing[modelID] = best.pricing
+		count++
 	}
 	return count, nil
 }
