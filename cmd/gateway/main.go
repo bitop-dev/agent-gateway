@@ -14,6 +14,7 @@ import (
 
 	"github.com/bitop-dev/agent-gateway/internal/api"
 	"github.com/bitop-dev/agent-gateway/internal/db"
+	"github.com/bitop-dev/agent-gateway/internal/events"
 	"github.com/bitop-dev/agent-gateway/internal/router"
 	"github.com/bitop-dev/agent-gateway/internal/scheduler"
 )
@@ -24,6 +25,7 @@ var migrationSQL string
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	dsn := flag.String("dsn", "", "PostgreSQL connection string")
+	natsURL := flag.String("nats", "", "NATS URL (optional, e.g. nats://localhost:4222)")
 	registryURL := flag.String("registry", "", "agent-registry URL")
 	adminKey := flag.String("admin-key", "", "admin API key")
 	flag.Parse()
@@ -65,9 +67,21 @@ func main() {
 		log.Printf("marked %d stale workers", stale)
 	}
 
+	// Connect to NATS (optional).
+	natsAddr := *natsURL
+	if natsAddr == "" {
+		natsAddr = os.Getenv("NATS_URL")
+	}
+	bus, err := events.Connect(natsAddr)
+	if err != nil {
+		log.Printf("NATS connection failed (events will be logged only): %v", err)
+		bus, _ = events.Connect("")
+	}
+	defer bus.Close()
+
 	// Build server.
-	rtr := router.NewRouter(database)
-	srv := api.NewServer(database, rtr, *registryURL, *adminKey)
+	rtr := router.NewRouter(database, bus)
+	srv := api.NewServer(database, rtr, bus, *registryURL, *adminKey)
 
 	// Start scheduler.
 	sched := &scheduler.Scheduler{DB: database, Router: rtr}

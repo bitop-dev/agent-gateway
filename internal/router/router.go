@@ -10,18 +10,21 @@ import (
 	"time"
 
 	"github.com/bitop-dev/agent-gateway/internal/db"
+	"github.com/bitop-dev/agent-gateway/internal/events"
 )
 
 // Router dispatches tasks to available workers.
 type Router struct {
 	DB     *db.DB
+	Events *events.Bus
 	Client *http.Client
 }
 
 // NewRouter creates a task router.
-func NewRouter(database *db.DB) *Router {
+func NewRouter(database *db.DB, bus *events.Bus) *Router {
 	return &Router{
 		DB:     database,
+		Events: bus,
 		Client: &http.Client{Timeout: 10 * time.Minute},
 	}
 }
@@ -42,6 +45,13 @@ func (r *Router) Dispatch(ctx context.Context, task *db.Task) (*db.Task, error) 
 	r.DB.SetWorkerTask(ctx, worker.URL, task.ID)
 	r.DB.UpdateTaskStarted(ctx, task.ID, worker.URL)
 
+	r.Events.Publish(events.Event{
+		Topic:     events.TopicTaskStarted,
+		TaskID:    task.ID,
+		Profile:   task.Profile,
+		WorkerURL: worker.URL,
+	})
+
 	start := time.Now()
 
 	// Dispatch to worker.
@@ -54,6 +64,14 @@ func (r *Router) Dispatch(ctx context.Context, task *db.Task) (*db.Task, error) 
 
 	if err != nil {
 		r.DB.UpdateTaskFailed(ctx, task.ID, err.Error(), durationMs)
+		r.Events.Publish(events.Event{
+			Topic:     events.TopicTaskFailed,
+			TaskID:    task.ID,
+			Profile:   task.Profile,
+			WorkerURL: worker.URL,
+			Message:   err.Error(),
+			Data:      map[string]any{"durationMs": durationMs},
+		})
 		task.Status = "failed"
 		task.Error = err.Error()
 		task.DurationMs = durationMs
@@ -61,6 +79,13 @@ func (r *Router) Dispatch(ctx context.Context, task *db.Task) (*db.Task, error) 
 	}
 
 	r.DB.UpdateTaskCompleted(ctx, task.ID, result.Output, 0, durationMs)
+	r.Events.Publish(events.Event{
+		Topic:     events.TopicTaskCompleted,
+		TaskID:    task.ID,
+		Profile:   task.Profile,
+		WorkerURL: worker.URL,
+		Data:      map[string]any{"durationMs": durationMs},
+	})
 	task.Status = "completed"
 	task.Output = result.Output
 	task.DurationMs = durationMs

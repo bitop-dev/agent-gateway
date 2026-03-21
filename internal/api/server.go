@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/bitop-dev/agent-gateway/internal/db"
+	"github.com/bitop-dev/agent-gateway/internal/events"
 	"github.com/bitop-dev/agent-gateway/internal/router"
 	"github.com/google/uuid"
 )
@@ -18,14 +19,16 @@ import (
 type Server struct {
 	DB          *db.DB
 	Router      *router.Router
+	Events      *events.Bus
 	RegistryURL string
 	AdminKey    string
 }
 
-func NewServer(database *db.DB, rtr *router.Router, registryURL, adminKey string) *Server {
+func NewServer(database *db.DB, rtr *router.Router, bus *events.Bus, registryURL, adminKey string) *Server {
 	return &Server{
 		DB:          database,
 		Router:      rtr,
+		Events:      bus,
 		RegistryURL: registryURL,
 		AdminKey:    adminKey,
 	}
@@ -49,6 +52,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/auth/keys", s.requireAuth(s.handleAPIKeys, "admin"))
 	mux.HandleFunc("/v1/schedules", s.requireAuth(s.handleSchedules, "admin"))
 	mux.HandleFunc("/v1/webhooks", s.requireAuth(s.handleWebhookCRUD, "admin"))
+
+	// Event stream (SSE)
+	mux.HandleFunc("/v1/events", s.requireAuth(s.handleEventStream, "tasks:read"))
 
 	// Webhook triggers (auth via per-webhook token, not API key)
 	mux.HandleFunc("/v1/webhooks/", s.handleWebhook)
@@ -224,6 +230,13 @@ func (s *Server) submitTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.Events.Publish(events.Event{
+		Topic:   events.TopicTaskSubmitted,
+		TaskID:  task.ID,
+		Profile: task.Profile,
+		Message: task.Task,
+	})
+
 	if req.Async {
 		// Return immediately — task will be dispatched in the background.
 		go func() {
@@ -305,6 +318,11 @@ func (s *Server) handleWorkers(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		s.Events.Publish(events.Event{
+			Topic:     events.TopicWorkerJoined,
+			WorkerURL: req.URL,
+			Message:   fmt.Sprintf("worker registered with %d profiles", len(req.Profiles)),
+		})
 		writeJSON(w, http.StatusOK, map[string]any{"registered": true, "url": req.URL})
 
 	case http.MethodGet:
@@ -379,6 +397,42 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"agents": agents, "count": len(agents)})
+}
+
+// ── Event stream (SSE) ────────────────────────────────────────────────────────
+
+func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming not supported")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	// Subscribe to all agent events.
+	eventCh := make(chan events.Event, 64)
+	s.Events.Subscribe("agent.>", func(e events.Event) {
+		select {
+		case eventCh <- e:
+		default: // drop if buffer full
+		}
+	})
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case e := <-eventCh:
+			data, _ := json.Marshal(e)
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", e.Topic, data)
+			flusher.Flush()
+		}
+	}
 }
 
 // ── Schedules ─────────────────────────────────────────────────────────────────
@@ -579,6 +633,13 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		s.Router.Dispatch(ctx, &task)
 	}()
 
+	s.Events.Publish(events.Event{
+		Topic:   events.TopicWebhookFired,
+		TaskID:  task.ID,
+		Profile: task.Profile,
+		Message: fmt.Sprintf("webhook %s triggered", path),
+		Data:    map[string]any{"webhook": path, "payload": payload},
+	})
 	log.Printf("webhook %s → task %s (profile=%s)", path, task.ID, task.Profile)
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"taskId":  task.ID,
