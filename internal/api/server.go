@@ -443,7 +443,14 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		Name         string   `json:"name"`
 		Description  string   `json:"description,omitempty"`
 		Capabilities []string `json:"capabilities,omitempty"`
-		Source       string   `json:"source"` // "worker" or "registry"
+		Accepts      string   `json:"accepts,omitempty"`
+		Returns      string   `json:"returns,omitempty"`
+		Extends      string   `json:"extends,omitempty"`
+		Mode         string   `json:"mode,omitempty"`
+		Model        string   `json:"model,omitempty"`
+		Provider     string   `json:"provider,omitempty"`
+		Tools        []string `json:"tools,omitempty"`
+		Source       string   `json:"source"`
 	}
 
 	seen := make(map[string]bool)
@@ -468,8 +475,16 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		if err == nil && resp.StatusCode == http.StatusOK {
 			var index struct {
 				Profiles []struct {
-					Name        string `json:"name"`
-					Description string `json:"description"`
+					Name         string   `json:"name"`
+					Description  string   `json:"description"`
+					Capabilities []string `json:"capabilities"`
+					Accepts      string   `json:"accepts"`
+					Returns      string   `json:"returns"`
+					Extends      string   `json:"extends"`
+					Mode         string   `json:"mode"`
+					Model        string   `json:"model"`
+					Provider     string   `json:"provider"`
+					Tools        []string `json:"tools"`
 				} `json:"profiles"`
 			}
 			json.NewDecoder(resp.Body).Decode(&index)
@@ -479,7 +494,14 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				seen[p.Name] = true
-				agents = append(agents, agentInfo{Name: p.Name, Description: p.Description, Source: "registry"})
+				agents = append(agents, agentInfo{
+					Name: p.Name, Description: p.Description,
+					Capabilities: p.Capabilities, Accepts: p.Accepts,
+					Returns: p.Returns, Extends: p.Extends,
+					Mode: p.Mode, Model: p.Model,
+					Provider: p.Provider, Tools: p.Tools,
+					Source: "registry",
+				})
 			}
 		}
 	}
@@ -496,12 +518,14 @@ func (s *Server) handlePlugins(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type pluginInfo struct {
-		Name        string `json:"name"`
-		Version     string `json:"version"`
-		Description string `json:"description,omitempty"`
-		Category    string `json:"category,omitempty"`
-		Runtime     string `json:"runtime,omitempty"`
-		Source      string `json:"source"`
+		Name         string   `json:"name"`
+		Version      string   `json:"version"`
+		Description  string   `json:"description,omitempty"`
+		Category     string   `json:"category,omitempty"`
+		Runtime      string   `json:"runtime,omitempty"`
+		Tools        []string `json:"tools,omitempty"`
+		Dependencies []string `json:"dependencies,omitempty"`
+		Source       string   `json:"source"`
 	}
 
 	var plugins []pluginInfo
@@ -512,23 +536,27 @@ func (s *Server) handlePlugins(w http.ResponseWriter, r *http.Request) {
 		if err == nil && resp.StatusCode == http.StatusOK {
 			var index struct {
 				Packages []struct {
-					Name          string `json:"name"`
-					LatestVersion string `json:"latestVersion"`
-					Description   string `json:"description"`
-					Category      string `json:"category"`
-					Runtime       string `json:"runtime"`
+					Name          string   `json:"name"`
+					LatestVersion string   `json:"latestVersion"`
+					Description   string   `json:"description"`
+					Category      string   `json:"category"`
+					Runtime       string   `json:"runtime"`
+					Tools         []string `json:"tools"`
+					Dependencies  []string `json:"dependencies"`
 				} `json:"packages"`
 			}
 			json.NewDecoder(resp.Body).Decode(&index)
 			resp.Body.Close()
 			for _, p := range index.Packages {
 				plugins = append(plugins, pluginInfo{
-					Name:        p.Name,
-					Version:     p.LatestVersion,
-					Description: p.Description,
-					Category:    p.Category,
-					Runtime:     p.Runtime,
-					Source:      "registry",
+					Name:         p.Name,
+					Version:      p.LatestVersion,
+					Description:  p.Description,
+					Category:     p.Category,
+					Runtime:      p.Runtime,
+					Tools:        p.Tools,
+					Dependencies: p.Dependencies,
+					Source:       "registry",
 				})
 			}
 		}

@@ -37,6 +37,11 @@ export interface Agent {
   capabilities?: string[];
   accepts?: string;
   returns?: string;
+  extends?: string;
+  mode?: string;
+  model?: string;
+  provider?: string;
+  tools?: string[];
   source: string;
 }
 
@@ -94,6 +99,8 @@ export interface Plugin {
   description?: string;
   category?: string;
   runtime?: string;
+  tools?: string[];
+  dependencies?: string[];
   source: string;
 }
 

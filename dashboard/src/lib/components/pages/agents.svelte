@@ -145,6 +145,32 @@
             </p>
             <Badge variant="outline">{selectedAgent.source}</Badge>
           </div>
+          {#if selectedAgent.provider || selectedAgent.model}
+            <div>
+              <p class="text-xs text-muted-foreground font-medium uppercase mb-1">
+                Provider / Model
+              </p>
+              <p class="text-sm font-mono">
+                {selectedAgent.provider || "openai"} / {selectedAgent.model || "—"}
+              </p>
+            </div>
+          {/if}
+          {#if selectedAgent.mode}
+            <div>
+              <p class="text-xs text-muted-foreground font-medium uppercase mb-1">
+                Mode
+              </p>
+              <Badge variant="secondary">{selectedAgent.mode}</Badge>
+            </div>
+          {/if}
+          {#if selectedAgent.extends}
+            <div>
+              <p class="text-xs text-muted-foreground font-medium uppercase mb-1">
+                Extends
+              </p>
+              <Badge variant="outline">{selectedAgent.extends}</Badge>
+            </div>
+          {/if}
         </div>
 
         {#if selectedAgent.capabilities?.length}
@@ -155,6 +181,19 @@
             <div class="flex flex-wrap gap-1.5">
               {#each selectedAgent.capabilities as cap}
                 <Badge variant="secondary">{cap}</Badge>
+              {/each}
+            </div>
+          </div>
+        {/if}
+
+        {#if selectedAgent.tools?.length}
+          <div>
+            <p class="text-xs text-muted-foreground font-medium uppercase mb-2">
+              Tools
+            </p>
+            <div class="flex flex-wrap gap-1.5">
+              {#each selectedAgent.tools as t}
+                <Badge variant="outline" class="font-mono text-[11px]">{t}</Badge>
               {/each}
             </div>
           </div>
