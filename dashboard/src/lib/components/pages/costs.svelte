@@ -37,8 +37,9 @@
     loading = true;
     try {
       const since = sinceDate(timeRange);
-      const resp = await api.getCosts(since || undefined);
-      costs = resp.costs || [];
+      const resp = await api.getCosts(since || undefined) as any;
+      // Gateway returns { profiles: [...], totalCost, totalTokens, since }
+      costs = resp.costs || resp.profiles || [];
     } catch (e) {
       console.error("Failed to fetch costs:", e);
     } finally {

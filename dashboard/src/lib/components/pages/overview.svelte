@@ -25,18 +25,22 @@
 
   async function refresh() {
     try {
-      const [health, tasksResp, costsResp] = await Promise.all([
+      const [health, tasksResp, allTasks, costsResp] = await Promise.all([
         api.getHealth(),
         api.getTasks({ limit: 8 }),
+        api.getTasks({ limit: 1000 }),
         api.getCosts(),
       ]);
       workers = health.workers;
-      totalTasks = health.tasks;
+      const all = allTasks.tasks || [];
+      totalTasks = all.length;
+      completed = all.filter((t) => t.status === "completed").length;
+      failed = all.filter((t) => t.status === "failed").length;
       recentTasks = tasksResp.tasks || [];
-      completed = recentTasks.filter((t) => t.status === "completed").length;
-      failed = recentTasks.filter((t) => t.status === "failed").length;
-      totalCost = (costsResp.costs || []).reduce(
-        (sum, c) => sum + (c.cost || 0),
+      // costs: gateway returns { profiles: [...], totalCost }
+      const costsData = costsResp as any;
+      totalCost = costsData.totalCost || (costsData.costs || costsData.profiles || []).reduce(
+        (sum: number, c: any) => sum + (c.cost || c.totalCost || 0),
         0
       );
     } catch (e) {
@@ -62,6 +66,12 @@
     const hours = Math.floor(mins / 60);
     if (hours < 24) return `${hours}h ago`;
     return `${Math.floor(hours / 24)}d ago`;
+  }
+
+  function formatDuration(ms?: number): string {
+    if (!ms) return "";
+    if (ms < 1000) return `${ms}ms`;
+    return `${(ms / 1000).toFixed(1)}s`;
   }
 
   function statusVariant(
@@ -209,8 +219,11 @@
       <Card.Content>
         {#if $events.length === 0}
           <p class="text-sm text-muted-foreground">
-            Waiting for events... Connect with an API key to see real-time
-            activity.
+            {#if !loading}
+              Listening for events... Submit a task to see real-time activity.
+            {:else}
+              Connecting...
+            {/if}
           </p>
         {:else}
           <div class="space-y-2 max-h-[300px] overflow-y-auto">

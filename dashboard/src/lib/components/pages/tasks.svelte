@@ -60,10 +60,10 @@
     return `${Math.floor(hours / 24)}d ago`;
   }
 
-  function formatDuration(d?: number): string {
-    if (!d) return "—";
-    if (d < 1) return `${(d * 1000).toFixed(0)}ms`;
-    return `${d.toFixed(1)}s`;
+  function formatDuration(ms?: number): string {
+    if (!ms) return "—";
+    if (ms < 1000) return `${ms}ms`;
+    return `${(ms / 1000).toFixed(1)}s`;
   }
 
   function statusVariant(
@@ -163,7 +163,7 @@
                   </Badge>
                 </Table.Cell>
                 <Table.Cell class="text-sm">
-                  {formatDuration(task.duration)}
+                  {formatDuration(task.durationMs)}
                 </Table.Cell>
                 <Table.Cell class="text-right text-xs text-muted-foreground">
                   {timeAgo(task.createdAt)}

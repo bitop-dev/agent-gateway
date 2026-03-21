@@ -4,7 +4,6 @@
   import * as Card from "$lib/components/ui/card/index.js";
   import { Badge } from "$lib/components/ui/badge/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
-  import { Separator } from "$lib/components/ui/separator/index.js";
   import { Skeleton } from "$lib/components/ui/skeleton/index.js";
   import { navigate } from "$lib/router";
   import ArrowLeftIcon from "@lucide/svelte/icons/arrow-left";
@@ -41,10 +40,10 @@
     }
   }
 
-  function formatDuration(d?: number): string {
-    if (!d) return "—";
-    if (d < 1) return `${(d * 1000).toFixed(0)}ms`;
-    return `${d.toFixed(1)}s`;
+  function formatDuration(ms?: number): string {
+    if (!ms) return "—";
+    if (ms < 1000) return `${ms}ms`;
+    return `${(ms / 1000).toFixed(1)}s`;
   }
 
   function formatTokens(n?: number): string {
@@ -99,11 +98,11 @@
           </div>
           <div>
             <p class="text-sm text-muted-foreground">Duration</p>
-            <p class="font-medium">{formatDuration(task.duration)}</p>
+            <p class="font-medium">{formatDuration(task.durationMs)}</p>
           </div>
           <div>
             <p class="text-sm text-muted-foreground">Worker</p>
-            <p class="font-mono text-sm">{task.workerURL || "—"}</p>
+            <p class="font-mono text-sm">{task.workerUrl || "—"}</p>
           </div>
           <div>
             <p class="text-sm text-muted-foreground">Model</p>
@@ -118,6 +117,10 @@
           <div>
             <p class="text-sm text-muted-foreground">Cost</p>
             <p class="font-medium">${(task.cost || 0).toFixed(6)}</p>
+          </div>
+          <div>
+            <p class="text-sm text-muted-foreground">Tool Calls</p>
+            <p class="font-medium">{task.toolCalls ?? 0}</p>
           </div>
           <div>
             <p class="text-sm text-muted-foreground">Created</p>
@@ -159,17 +162,16 @@
       </Card.Content>
     </Card.Root>
 
-    <!-- Output / Error -->
-    {#if task.result || task.error}
+    <!-- Output -->
+    {#if task.output}
       <Card.Root>
         <Card.Header>
           <div class="flex items-center justify-between">
-            <Card.Title>{task.error ? "Error" : "Output"}</Card.Title>
+            <Card.Title>Output</Card.Title>
             <Button
               variant="ghost"
               size="sm"
-              onclick={() =>
-                copyToClipboard(task?.error || task?.result || "")}
+              onclick={() => copyToClipboard(task?.output || "")}
             >
               <CopyIcon class="h-4 w-4 mr-1" />
               Copy
@@ -177,12 +179,22 @@
           </div>
         </Card.Header>
         <Card.Content>
-          <div
-            class="rounded-md p-4 text-sm whitespace-pre-wrap max-h-[600px] overflow-y-auto {task.error
-              ? 'bg-destructive/10 text-destructive'
-              : 'bg-muted'}"
-          >
-            {task.error || task.result}
+          <div class="rounded-md bg-muted p-4 text-sm whitespace-pre-wrap max-h-[600px] overflow-y-auto">
+            {task.output}
+          </div>
+        </Card.Content>
+      </Card.Root>
+    {/if}
+
+    <!-- Error -->
+    {#if task.error}
+      <Card.Root>
+        <Card.Header>
+          <Card.Title>Error</Card.Title>
+        </Card.Header>
+        <Card.Content>
+          <div class="rounded-md bg-destructive/10 p-4 text-sm text-destructive whitespace-pre-wrap max-h-[600px] overflow-y-auto">
+            {task.error}
           </div>
         </Card.Content>
       </Card.Root>
