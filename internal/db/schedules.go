@@ -84,6 +84,15 @@ func (d *DB) UpdateScheduleRun(ctx context.Context, id string, lastRun, nextRun 
 	return err
 }
 
+func (d *DB) UpdateSchedule(ctx context.Context, s Schedule) error {
+	ctxJSON, _ := json.Marshal(s.Context)
+	_, err := d.Pool.Exec(ctx,
+		`UPDATE schedules SET name=$2, cron_expr=$3, timezone=$4, profile=$5, task=$6,
+		 context=$7, enabled=$8, next_run=$9 WHERE id=$1`,
+		s.ID, s.Name, s.CronExpr, s.Timezone, s.Profile, s.Task, ctxJSON, s.Enabled, s.NextRun)
+	return err
+}
+
 func (d *DB) DeleteSchedule(ctx context.Context, id string) error {
 	_, err := d.Pool.Exec(ctx, `DELETE FROM schedules WHERE id=$1`, id)
 	return err

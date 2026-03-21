@@ -10,18 +10,23 @@
   import { Skeleton } from "$lib/components/ui/skeleton/index.js";
   import ClockIcon from "@lucide/svelte/icons/clock";
   import PlusIcon from "@lucide/svelte/icons/plus";
+  import PencilIcon from "@lucide/svelte/icons/pencil";
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
 
   let schedules = $state<Schedule[]>([]);
   let loading = $state(true);
 
-  // Create dialog
-  let showCreate = $state(false);
-  let newName = $state("");
-  let newCron = $state("");
-  let newTimezone = $state("UTC");
-  let newProfile = $state("");
-  let newTask = $state("");
+  // Dialog state
+  let showDialog = $state(false);
+  let editMode = $state(false);
+  let editId = $state("");
+  let formName = $state("");
+  let formCron = $state("");
+  let formTimezone = $state("UTC");
+  let formProfile = $state("");
+  let formTask = $state("");
+  let formEnabled = $state(true);
+  let saving = $state(false);
 
   async function refresh() {
     try {
@@ -36,24 +41,78 @@
 
   onMount(refresh);
 
-  async function create() {
-    if (!newName.trim() || !newCron.trim() || !newProfile.trim() || !newTask.trim())
+  function openCreate() {
+    editMode = false;
+    editId = "";
+    formName = "";
+    formCron = "";
+    formTimezone = "UTC";
+    formProfile = "";
+    formTask = "";
+    formEnabled = true;
+    showDialog = true;
+  }
+
+  function openEdit(s: Schedule) {
+    editMode = true;
+    editId = s.id;
+    formName = s.name;
+    formCron = s.cron;
+    formTimezone = s.timezone || "UTC";
+    formProfile = s.profile;
+    formTask = s.task;
+    formEnabled = s.enabled;
+    showDialog = true;
+  }
+
+  async function save() {
+    if (!formName.trim() || !formCron.trim() || !formProfile.trim() || !formTask.trim())
       return;
+    saving = true;
     try {
-      await api.createSchedule({
-        name: newName.trim(),
-        cron: newCron.trim(),
-        timezone: newTimezone.trim() || "UTC",
-        profile: newProfile.trim(),
-        task: newTask.trim(),
-        enabled: true,
-      });
-      newName = newCron = newProfile = newTask = "";
-      newTimezone = "UTC";
-      showCreate = false;
+      if (editMode) {
+        await api.updateSchedule({
+          id: editId,
+          name: formName.trim(),
+          cron: formCron.trim(),
+          timezone: formTimezone.trim() || "UTC",
+          profile: formProfile.trim(),
+          task: formTask.trim(),
+          enabled: formEnabled,
+        });
+      } else {
+        await api.createSchedule({
+          name: formName.trim(),
+          cron: formCron.trim(),
+          timezone: formTimezone.trim() || "UTC",
+          profile: formProfile.trim(),
+          task: formTask.trim(),
+          enabled: true,
+        });
+      }
+      showDialog = false;
       await refresh();
     } catch (e) {
-      console.error("Failed to create schedule:", e);
+      console.error("Failed to save schedule:", e);
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function toggleEnabled(s: Schedule) {
+    try {
+      await api.updateSchedule({
+        id: s.id,
+        name: s.name,
+        cron: s.cron,
+        timezone: s.timezone || "UTC",
+        profile: s.profile,
+        task: s.task,
+        enabled: !s.enabled,
+      });
+      await refresh();
+    } catch (e) {
+      console.error("Failed to toggle schedule:", e);
     }
   }
 
@@ -66,12 +125,20 @@
       console.error("Failed to delete schedule:", e);
     }
   }
+
+  const cronExamples = [
+    { label: "Every minute", value: "* * * * *" },
+    { label: "Every 5 min", value: "*/5 * * * *" },
+    { label: "Every hour", value: "0 * * * *" },
+    { label: "Daily 8am", value: "0 8 * * *" },
+    { label: "Weekly Mon 9am", value: "0 9 * * 1" },
+  ];
 </script>
 
 <div class="space-y-6">
   <div class="flex items-center justify-between">
     <h1 class="text-3xl font-bold">Schedules</h1>
-    <Button size="sm" onclick={() => (showCreate = true)}>
+    <Button size="sm" onclick={openCreate}>
       <PlusIcon class="h-4 w-4 mr-1" />
       New Schedule
     </Button>
@@ -104,7 +171,7 @@
               <Table.Head>Status</Table.Head>
               <Table.Head>Last Run</Table.Head>
               <Table.Head>Next Run</Table.Head>
-              <Table.Head class="w-[60px]"></Table.Head>
+              <Table.Head class="w-[100px]"></Table.Head>
             </Table.Row>
           </Table.Header>
           <Table.Body>
@@ -117,25 +184,44 @@
                   {s.task}
                 </Table.Cell>
                 <Table.Cell>
-                  <Badge variant={s.enabled ? "default" : "secondary"}>
-                    {s.enabled ? "active" : "paused"}
-                  </Badge>
+                  <button onclick={() => toggleEnabled(s)}>
+                    <Badge
+                      variant={s.enabled ? "default" : "secondary"}
+                      class="cursor-pointer"
+                    >
+                      {s.enabled ? "active" : "paused"}
+                    </Badge>
+                  </button>
                 </Table.Cell>
                 <Table.Cell class="text-xs text-muted-foreground">
-                  {s.lastRun ? new Date(s.lastRun).toLocaleString() : "never"}
+                  {s.lastRun
+                    ? new Date(s.lastRun).toLocaleString()
+                    : "never"}
                 </Table.Cell>
                 <Table.Cell class="text-xs text-muted-foreground">
-                  {s.nextRun ? new Date(s.nextRun).toLocaleString() : "—"}
+                  {s.nextRun
+                    ? new Date(s.nextRun).toLocaleString()
+                    : "—"}
                 </Table.Cell>
                 <Table.Cell>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    class="h-7 w-7 p-0 text-destructive"
-                    onclick={() => deleteSchedule(s.id)}
-                  >
-                    <Trash2Icon class="h-3 w-3" />
-                  </Button>
+                  <div class="flex gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      class="h-7 w-7 p-0"
+                      onclick={() => openEdit(s)}
+                    >
+                      <PencilIcon class="h-3 w-3" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      class="h-7 w-7 p-0 text-destructive"
+                      onclick={() => deleteSchedule(s.id)}
+                    >
+                      <Trash2Icon class="h-3 w-3" />
+                    </Button>
+                  </div>
                 </Table.Cell>
               </Table.Row>
             {/each}
@@ -146,13 +232,15 @@
   </Card.Root>
 </div>
 
-<!-- Create dialog -->
-<Dialog.Root bind:open={showCreate}>
+<!-- Create/Edit dialog -->
+<Dialog.Root bind:open={showDialog}>
   <Dialog.Content>
     <Dialog.Header>
-      <Dialog.Title>Create Schedule</Dialog.Title>
+      <Dialog.Title>{editMode ? "Edit" : "Create"} Schedule</Dialog.Title>
       <Dialog.Description>
-        Schedule recurring agent tasks with cron expressions
+        {editMode
+          ? "Update this schedule's configuration"
+          : "Schedule recurring agent tasks with cron expressions"}
       </Dialog.Description>
     </Dialog.Header>
     <div class="space-y-4 py-4">
@@ -161,27 +249,39 @@
         <Input
           id="sched-name"
           placeholder="daily-ops-report"
-          bind:value={newName}
+          bind:value={formName}
         />
       </div>
       <div>
-        <label for="sched-cron" class="text-sm font-medium">Cron Expression</label>
+        <label for="sched-cron" class="text-sm font-medium"
+          >Cron Expression</label
+        >
         <Input
           id="sched-cron"
-          placeholder="0 8 * * * (daily at 8am)"
-          bind:value={newCron}
+          placeholder="0 8 * * *"
+          bind:value={formCron}
         />
+        <div class="flex flex-wrap gap-1 mt-2">
+          {#each cronExamples as ex}
+            <button
+              class="text-[10px] px-2 py-0.5 rounded border border-border hover:bg-accent transition-colors"
+              onclick={() => (formCron = ex.value)}
+            >
+              {ex.label}
+            </button>
+          {/each}
+        </div>
       </div>
       <div>
         <label for="sched-tz" class="text-sm font-medium">Timezone</label>
-        <Input id="sched-tz" placeholder="UTC" bind:value={newTimezone} />
+        <Input id="sched-tz" placeholder="UTC" bind:value={formTimezone} />
       </div>
       <div>
         <label for="sched-profile" class="text-sm font-medium">Profile</label>
         <Input
           id="sched-profile"
-          placeholder="grafana-alert-summary"
-          bind:value={newProfile}
+          placeholder="researcher"
+          bind:value={formProfile}
         />
       </div>
       <div>
@@ -189,22 +289,31 @@
         <Input
           id="sched-task"
           placeholder="Generate daily ops report"
-          bind:value={newTask}
+          bind:value={formTask}
         />
       </div>
+      {#if editMode}
+        <div>
+          <label class="flex items-center gap-2 text-sm">
+            <input type="checkbox" bind:checked={formEnabled} />
+            Enabled
+          </label>
+        </div>
+      {/if}
     </div>
     <Dialog.Footer>
-      <Button variant="outline" onclick={() => (showCreate = false)}
+      <Button variant="outline" onclick={() => (showDialog = false)}
         >Cancel</Button
       >
       <Button
-        onclick={create}
-        disabled={!newName.trim() ||
-          !newCron.trim() ||
-          !newProfile.trim() ||
-          !newTask.trim()}
+        onclick={save}
+        disabled={!formName.trim() ||
+          !formCron.trim() ||
+          !formProfile.trim() ||
+          !formTask.trim() ||
+          saving}
       >
-        Create
+        {saving ? "Saving..." : editMode ? "Save Changes" : "Create"}
       </Button>
     </Dialog.Footer>
   </Dialog.Content>

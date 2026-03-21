@@ -785,6 +785,55 @@ func (s *Server) handleSchedules(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusCreated, sched)
 
+	case http.MethodPut:
+		var req struct {
+			ID       string         `json:"id"`
+			Name     string         `json:"name"`
+			Cron     string         `json:"cron"`
+			Timezone string         `json:"timezone"`
+			Profile  string         `json:"profile"`
+			Task     string         `json:"task"`
+			Context  map[string]any `json:"context"`
+			Enabled  *bool          `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		if req.ID == "" {
+			writeError(w, http.StatusBadRequest, "id is required")
+			return
+		}
+		if req.Name == "" || req.Cron == "" || req.Profile == "" || req.Task == "" {
+			writeError(w, http.StatusBadRequest, "name, cron, profile, and task are required")
+			return
+		}
+		if req.Timezone == "" {
+			req.Timezone = "UTC"
+		}
+		enabled := true
+		if req.Enabled != nil {
+			enabled = *req.Enabled
+		}
+		now := time.Now()
+		nextRun := now.Add(1 * time.Minute)
+		sched := db.Schedule{
+			ID:       req.ID,
+			Name:     req.Name,
+			CronExpr: req.Cron,
+			Timezone: req.Timezone,
+			Profile:  req.Profile,
+			Task:     req.Task,
+			Context:  req.Context,
+			Enabled:  enabled,
+			NextRun:  &nextRun,
+		}
+		if err := s.DB.UpdateSchedule(r.Context(), sched); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, sched)
+
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
 		if id == "" {

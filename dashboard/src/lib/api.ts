@@ -266,6 +266,24 @@ export class AgentAPI {
     return this.post("/v1/schedules", config);
   }
 
+  async updateSchedule(schedule: {
+    id: string;
+    name: string;
+    cron: string;
+    timezone?: string;
+    profile: string;
+    task: string;
+    enabled: boolean;
+  }): Promise<Schedule> {
+    const resp = await fetch(`${API_BASE}/v1/schedules`, {
+      method: "PUT",
+      headers: this.headers(),
+      body: JSON.stringify(schedule),
+    });
+    if (!resp.ok) throw new Error(`${resp.status}: ${await resp.text()}`);
+    return resp.json();
+  }
+
   async deleteSchedule(id: string): Promise<void> {
     await this.del(`/v1/schedules?id=${id}`);
   }
