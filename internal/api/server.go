@@ -59,6 +59,13 @@ func (s *Server) Handler(webFS http.FileSystem) http.Handler {
 	mux.HandleFunc("/v1/schedules", s.requireAuth(s.handleSchedules, "admin"))
 	mux.HandleFunc("/v1/webhooks", s.requireAuth(s.handleWebhookCRUD, "admin"))
 
+	// Memory
+	mux.HandleFunc("/v1/memory", s.requireAuth(s.handleMemory, "tasks:write", "tasks:read"))
+
+	// Costs
+	mux.HandleFunc("/v1/costs", s.requireAuth(s.handleCosts, "tasks:read"))
+	mux.HandleFunc("/v1/costs/pricing", s.requireAuth(s.handlePricing, "admin"))
+
 	// Event stream (SSE)
 	mux.HandleFunc("/v1/events", s.requireAuth(s.handleEventStream, "tasks:read"))
 
@@ -471,6 +478,137 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"agents": agents, "count": len(agents)})
+}
+
+// ── Costs ─────────────────────────────────────────────────────────────────────
+
+func (s *Server) handleCosts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	sinceStr := r.URL.Query().Get("since")
+	since := time.Now().AddDate(0, 0, -30) // default 30 days
+	if sinceStr != "" {
+		if t, err := time.Parse("2006-01-02", sinceStr); err == nil {
+			since = t
+		}
+	}
+	summaries, err := s.DB.GetCostSummary(r.Context(), since)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var totalCost float64
+	var totalTokens int
+	for _, s := range summaries {
+		totalCost += s.TotalCost
+		totalTokens += s.TotalTokens
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"since":       since.Format("2006-01-02"),
+		"profiles":    summaries,
+		"totalCost":   totalCost,
+		"totalTokens": totalTokens,
+	})
+}
+
+// ── Pricing ───────────────────────────────────────────────────────────────────
+
+func (s *Server) handlePricing(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, map[string]any{
+			"pricing": db.DefaultPricing,
+			"unit":    "USD per million tokens",
+		})
+
+	case http.MethodPost:
+		var req struct {
+			Model           string  `json:"model"`
+			InputPerMillion  float64 `json:"inputPerMillion"`
+			OutputPerMillion float64 `json:"outputPerMillion"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		if req.Model == "" {
+			writeError(w, http.StatusBadRequest, "model is required")
+			return
+		}
+		db.SetPricing(req.Model, req.InputPerMillion, req.OutputPerMillion)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"model":            req.Model,
+			"inputPerMillion":  req.InputPerMillion,
+			"outputPerMillion": req.OutputPerMillion,
+			"unit":             "USD per million tokens",
+		})
+
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+// ── Memory ────────────────────────────────────────────────────────────────────
+
+func (s *Server) handleMemory(w http.ResponseWriter, r *http.Request) {
+	profile := r.URL.Query().Get("profile")
+	if profile == "" {
+		writeError(w, http.StatusBadRequest, "profile parameter required")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		key := r.URL.Query().Get("key")
+		if key != "" {
+			value, err := s.DB.Recall(r.Context(), profile, key)
+			if err != nil {
+				writeError(w, http.StatusNotFound, "key not found")
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"profile": profile, "key": key, "value": value})
+		} else {
+			entries, err := s.DB.RecallAll(r.Context(), profile)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"profile": profile, "entries": entries, "count": len(entries)})
+		}
+
+	case http.MethodPost:
+		var req struct {
+			Key   string `json:"key"`
+			Value string `json:"value"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		if req.Key == "" || req.Value == "" {
+			writeError(w, http.StatusBadRequest, "key and value required")
+			return
+		}
+		if err := s.DB.Remember(r.Context(), profile, req.Key, req.Value); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"stored": true, "profile": profile, "key": req.Key})
+
+	case http.MethodDelete:
+		key := r.URL.Query().Get("key")
+		if key != "" {
+			s.DB.Forget(r.Context(), profile, key)
+		} else {
+			s.DB.ForgetAll(r.Context(), profile)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "profile": profile})
+
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
 }
 
 // ── Event stream (SSE) ────────────────────────────────────────────────────────

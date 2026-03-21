@@ -85,3 +85,19 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_log(created_at);
+
+-- Cost tracking
+CREATE TABLE IF NOT EXISTS cost_tracking (
+  id             SERIAL PRIMARY KEY,
+  task_id        TEXT,
+  profile        TEXT NOT NULL,
+  model          TEXT,
+  input_tokens   INTEGER DEFAULT 0,
+  output_tokens  INTEGER DEFAULT 0,
+  total_tokens   INTEGER DEFAULT 0,
+  estimated_cost NUMERIC(10,6) DEFAULT 0,
+  created_at     TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_cost_profile ON cost_tracking(profile);
+CREATE INDEX IF NOT EXISTS idx_cost_created_at ON cost_tracking(created_at);
