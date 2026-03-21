@@ -1,176 +1,54 @@
 # Agent Gateway
 
-Task routing, auth, webhooks, and scheduling for the [agent](https://github.com/bitop-dev/agent) distributed platform.
-
-The gateway is the single entry point for all external interaction with the agent system.
-It accepts tasks, routes them to workers, stores results in PostgreSQL, and provides
-auth, webhooks, and cron scheduling.
+Task routing, auth, webhooks, scheduling, cost tracking, agent memory, and
+web dashboard for the [agent](https://github.com/bitop-dev/agent) platform.
 
 ## Quick start
 
 ```bash
-# Start PostgreSQL
-docker run -d --name agent-db -e POSTGRES_DB=agent -e POSTGRES_USER=agent \
-  -e POSTGRES_PASSWORD=agent -p 5433:5432 postgres:17-alpine
-
-# Start gateway
-go run ./cmd/gateway \
-  --addr :8080 \
-  --dsn "postgres://agent:agent@localhost:5433/agent?sslmode=disable" \
-  --registry "http://localhost:9080" \
-  --admin-key "your-admin-key"
-
-# Submit a task
-curl -X POST http://localhost:8080/v1/tasks \
-  -H "Authorization: Bearer your-admin-key" \
-  -H "Content-Type: application/json" \
-  -d '{"profile":"researcher","task":"Top AI story today"}'
+docker run -p 8080:8080 ghcr.io/bitop-dev/agent-gateway:0.4.4 \
+  --dsn "postgres://..." --admin-key "..." --nats "nats://nats:4222"
 ```
 
 ## API
 
-### Tasks
-
 | Endpoint | Method | Auth | Description |
 |---|---|---|---|
-| `/v1/tasks` | POST | `tasks:write` | Submit a task (sync or async) |
-| `/v1/tasks` | GET | `tasks:read` | List tasks (filter by `?status=`) |
-| `/v1/tasks/{id}` | GET | `tasks:read` | Get task details + result |
-| `/v1/tasks/parallel` | POST | `tasks:write` | Submit multiple tasks for concurrent execution across workers |
-
-Submit a task:
-```json
-POST /v1/tasks
-{"profile": "researcher", "task": "Research Anthropic news", "async": false}
-```
-
-Async mode returns immediately with a task ID:
-```json
-POST /v1/tasks
-{"profile": "researcher", "task": "...", "async": true}
-→ {"id": "task-abc123", "status": "queued"}
-```
-
-### Workers
-
-| Endpoint | Method | Auth | Description |
-|---|---|---|---|
-| `/v1/workers` | POST | none | Register/heartbeat a worker |
-| `/v1/workers` | GET | none | List registered workers |
-| `/v1/workers` | DELETE | none | Deregister (`?url=`) |
-
-### Auth
-
-| Endpoint | Method | Auth | Description |
-|---|---|---|---|
-| `/v1/auth/keys` | POST | `admin` | Create API key (returns raw key once) |
-| `/v1/auth/keys` | GET | `admin` | List API keys |
-| `/v1/auth/keys` | DELETE | `admin` | Revoke key (`?id=`) |
-
-Scopes: `tasks:write`, `tasks:read`, `admin`
-
-### Webhooks
-
-| Endpoint | Method | Auth | Description |
-|---|---|---|---|
-| `/v1/webhooks` | POST | `admin` | Create webhook config |
-| `/v1/webhooks` | GET | `admin` | List webhooks |
-| `/v1/webhooks` | DELETE | `admin` | Delete webhook (`?id=`) |
-| `/v1/webhooks/{path}` | POST | per-webhook token | Trigger a webhook |
-
-Webhook template expansion:
-```json
-POST /v1/webhooks
-{
-  "name": "grafana-alerts",
-  "path": "grafana",
-  "profile": "researcher",
-  "taskTemplate": "Alert: {{alertname}} on {{labels.host}}. Investigate.",
-  "contextTemplate": {"team": "{{labels.team}}"},
-  "authToken": "grafana-secret"
-}
-```
-
-Trigger:
-```json
-POST /v1/webhooks/grafana
-Authorization: Bearer grafana-secret
-{"alertname": "High CPU", "labels": {"host": "prod-01", "team": "ict-aipe"}}
-→ {"taskId": "task-xyz", "status": "queued"}
-```
-
-### Schedules
-
-| Endpoint | Method | Auth | Description |
-|---|---|---|---|
-| `/v1/schedules` | POST | `admin` | Create schedule |
-| `/v1/schedules` | GET | `admin` | List schedules |
-| `/v1/schedules` | DELETE | `admin` | Delete schedule (`?id=`) |
-
-```json
-POST /v1/schedules
-{
-  "name": "daily-ops",
-  "cron": "0 8 * * *",
-  "timezone": "America/New_York",
-  "profile": "grafana-alert-summary",
-  "task": "Daily ops report for team ict-aipe",
-  "context": {"team": "ict-aipe", "recipient": "nick@bitop.dev"}
-}
-```
-
-### Events and discovery
-
-| Endpoint | Method | Auth | Description |
-|---|---|---|---|
-| `/v1/agents` | GET | `tasks:read` | List available agents (workers + registry) |
-| `/v1/events` | GET | `tasks:read` | SSE event stream (real-time) |
+| `/v1/tasks` | POST | `tasks:write` | Submit task (sync or async) |
+| `/v1/tasks` | GET | `tasks:read` | List tasks |
+| `/v1/tasks/{id}` | GET | `tasks:read` | Task details + result |
+| `/v1/tasks/parallel` | POST | `tasks:write` | Parallel across workers |
+| `/v1/workers` | POST/GET/DELETE | none | Worker registration |
+| `/v1/auth/keys` | POST/GET/DELETE | `admin` | API key management |
+| `/v1/webhooks` | POST/GET/DELETE | `admin` | Webhook CRUD |
+| `/v1/webhooks/{path}` | POST | webhook token | Trigger webhook |
+| `/v1/schedules` | POST/GET/DELETE | `admin` | Cron scheduling |
+| `/v1/memory?profile=X` | POST/GET/DELETE | `tasks:*` | Agent memory |
+| `/v1/costs` | GET | `tasks:read` | Cost summary by profile |
+| `/v1/costs/pricing` | GET/POST | `admin` | Model pricing (models.dev) |
+| `/v1/agents` | GET | `tasks:read` | Available agents |
+| `/v1/events` | GET | `tasks:read` | SSE event stream |
 | `/v1/health` | GET | none | Health check |
 | `/` | GET | none | Web dashboard |
 
-### Retries
+## Key features
 
-The gateway automatically retries failed tasks on transient errors (timeouts,
-connection refused, 502/503/504) up to 2 times, picking a different worker
-each retry with exponential backoff.
-
-### Parallel execution
-
-```json
-POST /v1/tasks/parallel
-{
-  "tasks": [
-    {"profile": "researcher", "task": "Anthropic news"},
-    {"profile": "researcher", "task": "OpenAI news"}
-  ]
-}
-```
-
-Each task is dispatched to a different worker. Wall time equals the slowest
-task, not the sum. Workers with `GATEWAY_URL` set dispatch `agent/spawn-parallel`
-calls through the gateway for true k8s-wide parallelism.
+- **Routing** — capability-based, load-aware, prefers idle workers
+- **Retries** — auto-retry on timeouts/502s, pick different worker each retry
+- **Dead worker eviction** — unreachable workers removed immediately
+- **Cost tracking** — pricing from [models.dev](https://models.dev) (1800+ models, per-million-token)
+- **Agent memory** — per-profile persistent knowledge in PostgreSQL
+- **NATS events** — `agent.task.*`, `agent.worker.*`, `agent.webhook.*`
+- **Dashboard** — embedded web UI at `/`
 
 ## Configuration
 
 ```
---addr          Listen address (default :8080)
---dsn           PostgreSQL connection string (or DATABASE_URL env)
---nats          NATS URL for event bus (or NATS_URL env, optional)
---registry      agent-registry URL for profile discovery
---admin-key     Admin API key (or ADMIN_KEY env)
-```
-
-## NATS events
-
-When configured, publishes events to NATS for real-time monitoring:
-`agent.task.submitted`, `agent.task.completed`, `agent.task.failed`,
-`agent.task.retry`, `agent.worker.joined`, `agent.webhook.fired`
-
-## Docker
-
-```bash
-docker run -p 8080:8080 ghcr.io/bitop-dev/agent-gateway:latest \
-  --dsn "postgres://..." --admin-key "..."
+--addr          :8080
+--dsn           postgres://... (or DATABASE_URL)
+--nats          nats://... (or NATS_URL, optional)
+--registry      http://registry:9080
+--admin-key     ... (or ADMIN_KEY)
 ```
 
 ## Related repos
@@ -179,5 +57,4 @@ docker run -p 8080:8080 ghcr.io/bitop-dev/agent-gateway:latest \
 |---|---|
 | [agent](https://github.com/bitop-dev/agent) | Framework, CLI, workers |
 | [agent-registry](https://github.com/bitop-dev/agent-registry) | Plugin + profile packages |
-| [agent-plugins](https://github.com/bitop-dev/agent-plugins) | Plugin packages |
-| [agent-profiles](https://github.com/bitop-dev/agent-profiles) | Profile packages |
+| [agent-docs](https://github.com/bitop-dev/agent-docs) | Documentation |
