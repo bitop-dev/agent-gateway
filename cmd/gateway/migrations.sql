@@ -112,3 +112,8 @@ CREATE TABLE IF NOT EXISTS agent_memory (
   updated_at  TIMESTAMPTZ DEFAULT now(),
   UNIQUE(profile, key)
 );
+
+-- v0.5.2: Add token tracking to tasks
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS model TEXT;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS input_tokens INTEGER DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS output_tokens INTEGER DEFAULT 0;
