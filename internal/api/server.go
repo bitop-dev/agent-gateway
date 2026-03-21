@@ -50,6 +50,7 @@ func (s *Server) Handler(webFS http.FileSystem) http.Handler {
 
 	// Authenticated endpoints
 	mux.HandleFunc("/v1/tasks", s.requireAuth(s.handleTasks, "tasks:write", "tasks:read"))
+	mux.HandleFunc("/v1/tasks/parallel", s.requireAuth(s.handleParallelTasks, "tasks:write"))
 	mux.HandleFunc("/v1/tasks/", s.requireAuth(s.handleTaskByID, "tasks:read"))
 	mux.HandleFunc("/v1/agents", s.requireAuth(s.handleAgents, "tasks:read"))
 
@@ -276,6 +277,74 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tasks": tasks, "count": len(tasks)})
+}
+
+// handleParallelTasks accepts multiple tasks and dispatches them to different workers concurrently.
+func (s *Server) handleParallelTasks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req struct {
+		Tasks []struct {
+			Profile string         `json:"profile"`
+			Task    string         `json:"task"`
+			Context map[string]any `json:"context,omitempty"`
+		} `json:"tasks"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	if len(req.Tasks) == 0 {
+		writeError(w, http.StatusBadRequest, "tasks array is required")
+		return
+	}
+
+	// Create all tasks.
+	var tasks []*db.Task
+	for _, t := range req.Tasks {
+		task := &db.Task{
+			ID:        "task-" + uuid.New().String()[:8],
+			Profile:   t.Profile,
+			Task:      t.Task,
+			Context:   t.Context,
+			Status:    "queued",
+			Priority:  "normal",
+			CreatedAt: time.Now(),
+		}
+		s.DB.CreateTask(r.Context(), *task)
+		tasks = append(tasks, task)
+	}
+
+	// Dispatch all concurrently to different workers.
+	type result struct {
+		idx  int
+		task *db.Task
+		err  error
+	}
+	results := make(chan result, len(tasks))
+	for i, task := range tasks {
+		go func(idx int, t *db.Task) {
+			dispatched, err := s.Router.Dispatch(r.Context(), t)
+			results <- result{idx, dispatched, err}
+		}(i, task)
+	}
+
+	// Collect results.
+	output := make([]*db.Task, len(tasks))
+	for range tasks {
+		r := <-results
+		if r.err != nil {
+			tasks[r.idx].Status = "failed"
+			tasks[r.idx].Error = r.err.Error()
+			output[r.idx] = tasks[r.idx]
+		} else {
+			output[r.idx] = r.task
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"tasks": output, "count": len(output)})
 }
 
 func (s *Server) handleTaskByID(w http.ResponseWriter, r *http.Request) {
