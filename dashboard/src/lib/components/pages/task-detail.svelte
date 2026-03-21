@@ -15,14 +15,24 @@
   let loading = $state(true);
   let error = $state("");
 
-  onMount(async () => {
+  async function loadTask(id: string) {
+    loading = true;
+    error = "";
+    task = null;
     try {
-      task = await api.getTask(taskId);
+      task = await api.getTask(id);
     } catch (e: any) {
       error = e.message;
     } finally {
       loading = false;
     }
+  }
+
+  onMount(() => loadTask(taskId));
+
+  // Re-fetch when taskId changes (hash navigation)
+  $effect(() => {
+    loadTask(taskId);
   });
 
   function statusVariant(
