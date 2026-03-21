@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -33,20 +34,127 @@ func NewServer(database *db.DB, rtr *router.Router, registryURL, adminKey string
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
-	// Health
+	// Health (no auth)
 	mux.HandleFunc("/v1/health", s.handleHealth)
 
-	// Tasks
-	mux.HandleFunc("/v1/tasks", s.handleTasks)     // POST + GET
-	mux.HandleFunc("/v1/tasks/", s.handleTaskByID)  // GET /v1/tasks/{id}
+	// Workers (no auth — workers self-register)
+	mux.HandleFunc("/v1/workers", s.handleWorkers)
 
-	// Workers
-	mux.HandleFunc("/v1/workers", s.handleWorkers)  // POST + GET + DELETE
+	// Authenticated endpoints
+	mux.HandleFunc("/v1/tasks", s.requireAuth(s.handleTasks, "tasks:write", "tasks:read"))
+	mux.HandleFunc("/v1/tasks/", s.requireAuth(s.handleTaskByID, "tasks:read"))
+	mux.HandleFunc("/v1/agents", s.requireAuth(s.handleAgents, "tasks:read"))
 
-	// Agents (discovery proxy)
-	mux.HandleFunc("/v1/agents", s.handleAgents)
+	// Admin endpoints
+	mux.HandleFunc("/v1/auth/keys", s.requireAuth(s.handleAPIKeys, "admin"))
+	mux.HandleFunc("/v1/webhooks", s.requireAuth(s.handleWebhookCRUD, "admin"))
+
+	// Webhook triggers (auth via per-webhook token, not API key)
+	mux.HandleFunc("/v1/webhooks/", s.handleWebhook)
 
 	return logMiddleware(mux)
+}
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+
+func (s *Server) requireAuth(handler http.HandlerFunc, requiredScopes ...string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// If no admin key is configured, auth is disabled.
+		if s.AdminKey == "" {
+			handler(w, r)
+			return
+		}
+
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if token == "" {
+			writeError(w, http.StatusUnauthorized, "authorization required")
+			return
+		}
+
+		// Check admin key first.
+		if token == s.AdminKey {
+			handler(w, r)
+			return
+		}
+
+		// Check API keys in database.
+		keyHash := db.HashKey(token)
+		apiKey, err := s.DB.ValidateAPIKey(r.Context(), keyHash)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "invalid API key")
+			return
+		}
+
+		// Check scope — need at least one matching scope for the request method.
+		scope := requiredScopes[0]
+		if r.Method == http.MethodGet && len(requiredScopes) > 1 {
+			scope = requiredScopes[1] // read scope for GET
+		}
+		if !s.DB.HasScope(apiKey, scope) {
+			writeError(w, http.StatusForbidden, "insufficient scope: requires "+scope)
+			return
+		}
+
+		handler(w, r)
+	}
+}
+
+func (s *Server) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		keys, err := s.DB.ListAPIKeys(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"keys": keys, "count": len(keys)})
+
+	case http.MethodPost:
+		var req struct {
+			Name   string   `json:"name"`
+			Scopes []string `json:"scopes"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		if req.Name == "" {
+			writeError(w, http.StatusBadRequest, "name is required")
+			return
+		}
+		if len(req.Scopes) == 0 {
+			req.Scopes = []string{"tasks:write", "tasks:read"}
+		}
+
+		keyID := "key-" + uuid.New().String()[:8]
+		rawKey := "ag-" + uuid.New().String()
+		keyHash := db.HashKey(rawKey)
+
+		if err := s.DB.CreateAPIKey(r.Context(), keyID, req.Name, keyHash, req.Scopes); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		// Return the raw key ONCE — it can never be retrieved again.
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"id":     keyID,
+			"name":   req.Name,
+			"key":    rawKey,
+			"scopes": req.Scopes,
+			"note":   "Save this key — it cannot be retrieved again",
+		})
+
+	case http.MethodDelete:
+		keyID := r.URL.Query().Get("id")
+		if keyID == "" {
+			writeError(w, http.StatusBadRequest, "id parameter required")
+			return
+		}
+		s.DB.RevokeAPIKey(r.Context(), keyID)
+		writeJSON(w, http.StatusOK, map[string]any{"revoked": true, "id": keyID})
+
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
 }
 
 // ── Health ────────────────────────────────────────────────────────────────────
@@ -270,6 +378,168 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"agents": agents, "count": len(agents)})
+}
+
+// ── Webhook management ────────────────────────────────────────────────────────
+
+func (s *Server) handleWebhookCRUD(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		webhooks, err := s.DB.ListWebhooks(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"webhooks": webhooks, "count": len(webhooks)})
+
+	case http.MethodPost:
+		var req struct {
+			Name            string         `json:"name"`
+			Path            string         `json:"path"`
+			Profile         string         `json:"profile"`
+			TaskTemplate    string         `json:"taskTemplate"`
+			ContextTemplate map[string]any `json:"contextTemplate"`
+			AuthToken       string         `json:"authToken"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		if req.Name == "" || req.Path == "" || req.Profile == "" || req.TaskTemplate == "" {
+			writeError(w, http.StatusBadRequest, "name, path, profile, and taskTemplate are required")
+			return
+		}
+		wh := db.Webhook{
+			ID:              "wh-" + uuid.New().String()[:8],
+			Name:            req.Name,
+			Path:            req.Path,
+			Profile:         req.Profile,
+			TaskTemplate:    req.TaskTemplate,
+			ContextTemplate: req.ContextTemplate,
+			AuthToken:       req.AuthToken,
+			Enabled:         true,
+		}
+		if err := s.DB.CreateWebhook(r.Context(), wh); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, wh)
+
+	case http.MethodDelete:
+		id := r.URL.Query().Get("id")
+		if id == "" {
+			writeError(w, http.StatusBadRequest, "id parameter required")
+			return
+		}
+		s.DB.DeleteWebhook(r.Context(), id)
+		writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "id": id})
+
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+// ── Webhook triggers ──────────────────────────────────────────────────────────
+
+func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	// Extract the webhook path: /v1/webhooks/grafana-alerts → grafana-alerts
+	path := strings.TrimPrefix(r.URL.Path, "/v1/webhooks/")
+	if path == "" {
+		writeError(w, http.StatusBadRequest, "webhook path required")
+		return
+	}
+
+	webhook, err := s.DB.GetWebhookByPath(r.Context(), path)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "webhook not found: "+path)
+		return
+	}
+
+	// Check webhook-specific auth token if configured.
+	if webhook.AuthToken != "" {
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if token != webhook.AuthToken {
+			writeError(w, http.StatusUnauthorized, "invalid webhook token")
+			return
+		}
+	}
+
+	// Parse the incoming payload.
+	var payload map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON payload")
+		return
+	}
+
+	// Expand the task template with the payload.
+	taskText := expandTemplate(webhook.TaskTemplate, payload)
+
+	// Build context from template.
+	taskContext := make(map[string]any)
+	for k, v := range webhook.ContextTemplate {
+		if s, ok := v.(string); ok {
+			taskContext[k] = expandTemplate(s, payload)
+		} else {
+			taskContext[k] = v
+		}
+	}
+	// Also include the raw payload in context.
+	taskContext["_webhook"] = path
+	taskContext["_payload"] = payload
+
+	// Create and dispatch the task.
+	task := db.Task{
+		ID:        "task-" + uuid.New().String()[:8],
+		Profile:   webhook.Profile,
+		Task:      taskText,
+		Context:   taskContext,
+		Status:    "queued",
+		Priority:  "normal",
+		CreatedAt: time.Now(),
+	}
+	s.DB.CreateTask(r.Context(), task)
+
+	// Dispatch async — webhooks shouldn't block.
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		s.Router.Dispatch(ctx, &task)
+	}()
+
+	log.Printf("webhook %s → task %s (profile=%s)", path, task.ID, task.Profile)
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"taskId":  task.ID,
+		"profile": task.Profile,
+		"status":  "queued",
+	})
+}
+
+// expandTemplate replaces {{key}} and {{nested.key}} with values from the payload.
+func expandTemplate(tmpl string, payload map[string]any) string {
+	result := tmpl
+	for k, v := range payload {
+		placeholder := "{{" + k + "}}"
+		switch val := v.(type) {
+		case string:
+			result = strings.ReplaceAll(result, placeholder, val)
+		case map[string]any:
+			// Handle nested: {{labels.team}} etc.
+			for nk, nv := range val {
+				nested := "{{" + k + "." + nk + "}}"
+				if s, ok := nv.(string); ok {
+					result = strings.ReplaceAll(result, nested, s)
+				}
+			}
+		default:
+			result = strings.ReplaceAll(result, placeholder, fmt.Sprint(v))
+		}
+	}
+	return result
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
