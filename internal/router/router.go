@@ -94,12 +94,33 @@ func (r *Router) Dispatch(ctx context.Context, task *db.Task) (*db.Task, error) 
 		// Success.
 		totalDuration := int(time.Since(totalStart).Milliseconds())
 		r.DB.UpdateTaskCompleted(ctx, task.ID, result.Output, 0, totalDuration)
+
+		// Record cost if worker reported token usage.
+		if result.InputTokens > 0 || result.OutputTokens > 0 {
+			cost := db.EstimateCost(result.Model, result.InputTokens, result.OutputTokens)
+			r.DB.RecordCost(ctx, db.CostEntry{
+				TaskID:        task.ID,
+				Profile:       task.Profile,
+				Model:         result.Model,
+				InputTokens:   result.InputTokens,
+				OutputTokens:  result.OutputTokens,
+				TotalTokens:   result.InputTokens + result.OutputTokens,
+				EstimatedCost: cost,
+			})
+		}
+
 		r.Events.Publish(events.Event{
 			Topic:     events.TopicTaskCompleted,
 			TaskID:    task.ID,
 			Profile:   task.Profile,
 			WorkerURL: worker.URL,
-			Data:      map[string]any{"durationMs": totalDuration, "attempts": attempt + 1},
+			Data: map[string]any{
+				"durationMs":   totalDuration,
+				"attempts":     attempt + 1,
+				"model":        result.Model,
+				"inputTokens":  result.InputTokens,
+				"outputTokens": result.OutputTokens,
+			},
 		})
 		task.Status = "completed"
 		task.Output = result.Output
@@ -147,10 +168,13 @@ func isTransientError(err error) bool {
 }
 
 type workerResponse struct {
-	Status   string `json:"status"`
-	Output   string `json:"output"`
-	Error    string `json:"error"`
-	Duration float64 `json:"duration"`
+	Status       string  `json:"status"`
+	Output       string  `json:"output"`
+	Error        string  `json:"error"`
+	Duration     float64 `json:"duration"`
+	Model        string  `json:"model"`
+	InputTokens  int     `json:"inputTokens"`
+	OutputTokens int     `json:"outputTokens"`
 }
 
 func (r *Router) callWorker(ctx context.Context, workerURL string, task *db.Task) (*workerResponse, error) {
