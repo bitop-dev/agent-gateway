@@ -101,3 +101,14 @@ CREATE TABLE IF NOT EXISTS cost_tracking (
 
 CREATE INDEX IF NOT EXISTS idx_cost_profile ON cost_tracking(profile);
 CREATE INDEX IF NOT EXISTS idx_cost_created_at ON cost_tracking(created_at);
+
+-- Agent memory (per-profile persistent knowledge)
+CREATE TABLE IF NOT EXISTS agent_memory (
+  id          SERIAL PRIMARY KEY,
+  profile     TEXT NOT NULL,
+  key         TEXT NOT NULL,
+  value       TEXT NOT NULL,
+  created_at  TIMESTAMPTZ DEFAULT now(),
+  updated_at  TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(profile, key)
+);
