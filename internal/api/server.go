@@ -47,6 +47,7 @@ func (s *Server) Handler() http.Handler {
 
 	// Admin endpoints
 	mux.HandleFunc("/v1/auth/keys", s.requireAuth(s.handleAPIKeys, "admin"))
+	mux.HandleFunc("/v1/schedules", s.requireAuth(s.handleSchedules, "admin"))
 	mux.HandleFunc("/v1/webhooks", s.requireAuth(s.handleWebhookCRUD, "admin"))
 
 	// Webhook triggers (auth via per-webhook token, not API key)
@@ -378,6 +379,73 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"agents": agents, "count": len(agents)})
+}
+
+// ── Schedules ─────────────────────────────────────────────────────────────────
+
+func (s *Server) handleSchedules(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		schedules, err := s.DB.ListSchedules(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"schedules": schedules, "count": len(schedules)})
+
+	case http.MethodPost:
+		var req struct {
+			Name     string         `json:"name"`
+			Cron     string         `json:"cron"`
+			Timezone string         `json:"timezone"`
+			Profile  string         `json:"profile"`
+			Task     string         `json:"task"`
+			Context  map[string]any `json:"context"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		if req.Name == "" || req.Cron == "" || req.Profile == "" || req.Task == "" {
+			writeError(w, http.StatusBadRequest, "name, cron, profile, and task are required")
+			return
+		}
+		if req.Timezone == "" {
+			req.Timezone = "UTC"
+		}
+		// Calculate first run time.
+		now := time.Now()
+		nextRun := now.Add(1 * time.Minute) // placeholder — scheduler will recalculate
+
+		sched := db.Schedule{
+			ID:       "sched-" + uuid.New().String()[:8],
+			Name:     req.Name,
+			CronExpr: req.Cron,
+			Timezone: req.Timezone,
+			Profile:  req.Profile,
+			Task:     req.Task,
+			Context:  req.Context,
+			Enabled:  true,
+			NextRun:  &nextRun,
+		}
+		if err := s.DB.CreateSchedule(r.Context(), sched); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, sched)
+
+	case http.MethodDelete:
+		id := r.URL.Query().Get("id")
+		if id == "" {
+			writeError(w, http.StatusBadRequest, "id parameter required")
+			return
+		}
+		s.DB.DeleteSchedule(r.Context(), id)
+		writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "id": id})
+
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
 }
 
 // ── Webhook management ────────────────────────────────────────────────────────

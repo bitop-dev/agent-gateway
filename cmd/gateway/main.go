@@ -15,6 +15,7 @@ import (
 	"github.com/bitop-dev/agent-gateway/internal/api"
 	"github.com/bitop-dev/agent-gateway/internal/db"
 	"github.com/bitop-dev/agent-gateway/internal/router"
+	"github.com/bitop-dev/agent-gateway/internal/scheduler"
 )
 
 //go:embed migrations.sql
@@ -67,6 +68,10 @@ func main() {
 	// Build server.
 	rtr := router.NewRouter(database)
 	srv := api.NewServer(database, rtr, *registryURL, *adminKey)
+
+	// Start scheduler.
+	sched := &scheduler.Scheduler{DB: database, Router: rtr}
+	go sched.Run(ctx)
 
 	// Start stale worker cleanup goroutine.
 	go func() {
