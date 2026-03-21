@@ -83,6 +83,14 @@ func main() {
 	}
 	defer bus.Close()
 
+	// Sync model pricing from models.dev.
+	log.Printf("syncing model pricing from models.dev...")
+	if count, err := db.SyncPricingFromModelsDev(); err != nil {
+		log.Printf("pricing sync failed (costs will show $0): %v", err)
+	} else {
+		log.Printf("loaded pricing for %d models from models.dev", count)
+	}
+
 	// Build server.
 	rtr := router.NewRouter(database, bus)
 	srv := api.NewServer(database, rtr, bus, *registryURL, *adminKey)

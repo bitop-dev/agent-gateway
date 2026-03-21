@@ -519,7 +519,7 @@ func (s *Server) handlePricing(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		writeJSON(w, http.StatusOK, map[string]any{
-			"pricing": db.DefaultPricing,
+			"pricing": db.Pricing,
 			"unit":    "USD per million tokens",
 		})
 

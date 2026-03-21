@@ -2,6 +2,9 @@ package db
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
 	"time"
 )
 
@@ -26,36 +29,57 @@ type CostSummary struct {
 	AvgTokens     int     `json:"avgTokensPerTask"`
 }
 
-// ModelPricing holds per-million-token pricing set by the admin.
+// ModelPricing holds per-million-token pricing.
 // Input and Output are USD per 1M tokens — the industry standard unit.
-// Example: gpt-4o charges $2.50/1M input tokens and $10.00/1M output tokens.
+// Sourced from https://models.dev (community-maintained, open-source).
 type ModelPricing struct {
 	Input  float64 `json:"inputPerMillion"`  // USD per 1M input tokens
 	Output float64 `json:"outputPerMillion"` // USD per 1M output tokens
 }
 
-// DefaultPricing is the built-in pricing table. Admins can override via
-// the gateway API or config. All prices are USD per million tokens.
-var DefaultPricing = map[string]ModelPricing{
-	// OpenAI
-	"gpt-4o":              {Input: 2.50, Output: 10.00},
-	"gpt-4o-mini":         {Input: 0.15, Output: 0.60},
-	"gpt-4-turbo":         {Input: 10.00, Output: 30.00},
-	"gpt-3.5-turbo":       {Input: 0.50, Output: 1.50},
-	// Self-hosted (free)
-	"gpt-oss-120b":                {Input: 0, Output: 0},
-	"gpt-oss-20b":                 {Input: 0, Output: 0},
-	"nemotron-3-super-120b-a12b":  {Input: 0, Output: 0},
-	"nemotron-3-nano-30b-a3b":     {Input: 0, Output: 0},
-	"llama-3.1-70b-instruct":      {Input: 0, Output: 0},
-	// Anthropic
-	"claude-3.7-sonnet":   {Input: 3.00, Output: 15.00},
-	"claude-3.5-sonnet":   {Input: 3.00, Output: 15.00},
-	"claude-4.0-sonnet":   {Input: 3.00, Output: 15.00},
-	"claude-4.5-sonnet":   {Input: 3.00, Output: 15.00},
-	// Google
-	"gemini-2.5-pro":      {Input: 1.25, Output: 10.00},
-	"gemini-2.5-flash":    {Input: 0.15, Output: 0.60},
+// Pricing is the live pricing table. Populated from models.dev at startup
+// and overridable by the admin via POST /v1/costs/pricing.
+var Pricing = map[string]ModelPricing{}
+
+// SyncPricingFromModelsDev fetches the latest pricing from https://models.dev/api.json
+// and populates the pricing table. Called at gateway startup.
+func SyncPricingFromModelsDev() (int, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get("https://models.dev/api.json")
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("models.dev returned %d", resp.StatusCode)
+	}
+
+	var providers map[string]struct {
+		Models map[string]struct {
+			ID   string `json:"id"`
+			Cost struct {
+				Input  float64 `json:"input"`
+				Output float64 `json:"output"`
+			} `json:"cost"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&providers); err != nil {
+		return 0, fmt.Errorf("decode: %w", err)
+	}
+
+	count := 0
+	for _, provider := range providers {
+		for _, model := range provider.Models {
+			if model.Cost.Input > 0 || model.Cost.Output > 0 {
+				Pricing[model.ID] = ModelPricing{
+					Input:  model.Cost.Input,
+					Output: model.Cost.Output,
+				}
+				count++
+			}
+		}
+	}
+	return count, nil
 }
 
 // EstimateCost calculates USD cost from token counts and per-million-token pricing.
@@ -63,7 +87,7 @@ var DefaultPricing = map[string]ModelPricing{
 //	cost = (inputTokens / 1,000,000) × inputPricePerMillion
 //	     + (outputTokens / 1,000,000) × outputPricePerMillion
 func EstimateCost(model string, inputTokens, outputTokens int) float64 {
-	pricing, ok := DefaultPricing[model]
+	pricing, ok := Pricing[model]
 	if !ok {
 		return 0.0
 	}
@@ -73,7 +97,7 @@ func EstimateCost(model string, inputTokens, outputTokens int) float64 {
 
 // SetPricing allows the admin to override pricing for a model at runtime.
 func SetPricing(model string, inputPerMillion, outputPerMillion float64) {
-	DefaultPricing[model] = ModelPricing{Input: inputPerMillion, Output: outputPerMillion}
+	Pricing[model] = ModelPricing{Input: inputPerMillion, Output: outputPerMillion}
 }
 
 func (d *DB) RecordCost(ctx context.Context, e CostEntry) error {
