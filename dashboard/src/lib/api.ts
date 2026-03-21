@@ -12,8 +12,8 @@ export interface Task {
   error?: string;
   workerUrl?: string;
   model?: string;
-  tokensIn?: number;
-  tokensOut?: number;
+  inputTokens?: number;
+  outputTokens?: number;
   toolCalls?: number;
   cost?: number;
   durationMs?: number;
@@ -73,9 +73,12 @@ export interface MemoryEntry {
 export interface CostSummary {
   profile: string;
   tasks: number;
-  tokensIn: number;
-  tokensOut: number;
+  totalTasks?: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens?: number;
   cost: number;
+  totalCost?: number;
 }
 
 export interface ModelPricing {

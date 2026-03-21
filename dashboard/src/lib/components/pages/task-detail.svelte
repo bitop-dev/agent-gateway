@@ -121,7 +121,7 @@
           <div>
             <p class="text-sm text-muted-foreground">Tokens</p>
             <p class="text-sm">
-              {formatTokens(task.tokensIn)} in / {formatTokens(task.tokensOut)} out
+              {formatTokens(task.inputTokens)} in / {formatTokens(task.outputTokens)} out
             </p>
           </div>
           <div>

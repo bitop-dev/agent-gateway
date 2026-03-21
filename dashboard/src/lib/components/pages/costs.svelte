@@ -64,15 +64,15 @@
     loadPricing();
   });
 
-  let totalCost = $derived(costs.reduce((sum, c) => sum + (c.cost || 0), 0));
+  let totalCost = $derived(costs.reduce((sum, c) => sum + (c.totalCost || c.cost || 0), 0));
   let totalTokensIn = $derived(
-    costs.reduce((sum, c) => sum + (c.tokensIn || 0), 0)
+    costs.reduce((sum, c) => sum + (c.inputTokens || 0), 0)
   );
   let totalTokensOut = $derived(
-    costs.reduce((sum, c) => sum + (c.tokensOut || 0), 0)
+    costs.reduce((sum, c) => sum + (c.outputTokens || 0), 0)
   );
   let totalTasks = $derived(
-    costs.reduce((sum, c) => sum + (c.tasks || 0), 0)
+    costs.reduce((sum, c) => sum + (c.totalTasks || c.tasks || 0), 0)
   );
 
   const ranges = [
@@ -182,15 +182,15 @@
                 {#each costs as c (c.profile)}
                   <Table.Row>
                     <Table.Cell class="font-medium">{c.profile}</Table.Cell>
-                    <Table.Cell class="text-right">{c.tasks}</Table.Cell>
+                    <Table.Cell class="text-right">{c.totalTasks || c.tasks}</Table.Cell>
                     <Table.Cell class="text-right"
-                      >{(c.tokensIn || 0).toLocaleString()}</Table.Cell
+                      >{(c.inputTokens || 0).toLocaleString()}</Table.Cell
                     >
                     <Table.Cell class="text-right"
-                      >{(c.tokensOut || 0).toLocaleString()}</Table.Cell
+                      >{(c.outputTokens || 0).toLocaleString()}</Table.Cell
                     >
                     <Table.Cell class="text-right font-medium"
-                      >${(c.cost || 0).toFixed(6)}</Table.Cell
+                      >${(c.totalCost || c.cost || 0).toFixed(6)}</Table.Cell
                     >
                   </Table.Row>
                 {/each}
