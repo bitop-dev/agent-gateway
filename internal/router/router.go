@@ -83,11 +83,15 @@ func (r *Router) Dispatch(ctx context.Context, task *db.Task) (*db.Task, error) 
 
 		if err != nil {
 			lastErr = err
+			// If the worker is unreachable, remove it immediately.
+			if isDeadWorker(err) {
+				log.Printf("router: removing dead worker %s: %v", worker.URL, err)
+				r.DB.RemoveWorker(ctx, worker.URL)
+			}
 			// Retry on transient errors, fail fast on permanent ones.
 			if isTransientError(err) {
 				continue
 			}
-			// Permanent error — don't retry.
 			break
 		}
 
@@ -144,6 +148,26 @@ func (r *Router) Dispatch(ctx context.Context, task *db.Task) (*db.Task, error) 
 	task.Error = errMsg
 	task.DurationMs = totalDuration
 	return task, nil
+}
+
+// isDeadWorker returns true when a worker is unreachable — connection
+// refused, no route, DNS failure. These workers should be removed
+// immediately instead of waiting for the stale cleanup timer.
+func isDeadWorker(err error) bool {
+	msg := err.Error()
+	dead := []string{
+		"connection refused",
+		"no such host",
+		"no route to host",
+		"i/o timeout",
+		"dial tcp",
+	}
+	for _, d := range dead {
+		if strings.Contains(msg, d) {
+			return true
+		}
+	}
+	return false
 }
 
 // isTransientError returns true for errors that are worth retrying.
