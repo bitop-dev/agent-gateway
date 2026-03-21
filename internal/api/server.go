@@ -86,6 +86,10 @@ func (s *Server) requireAuth(handler http.HandlerFunc, requiredScopes ...string)
 		}
 
 		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		// Also check query param (needed for SSE EventSource which can't set headers).
+		if token == "" {
+			token = r.URL.Query().Get("token")
+		}
 		if token == "" {
 			writeError(w, http.StatusUnauthorized, "authorization required")
 			return
