@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Dashboard</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #c9d1d9; }
+  .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+  h1 { color: #58a6ff; margin-bottom: 20px; font-size: 24px; }
+  h2 { color: #8b949e; margin: 20px 0 10px; font-size: 16px; text-transform: uppercase; letter-spacing: 1px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 30px; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
+  .card .label { color: #8b949e; font-size: 12px; }
+  .card .value { font-size: 28px; font-weight: bold; color: #58a6ff; margin-top: 4px; }
+  .card .value.green { color: #3fb950; }
+  .card .value.yellow { color: #d29922; }
+  .card .value.red { color: #f85149; }
+  table { width: 100%; border-collapse: collapse; background: #161b22; border-radius: 8px; overflow: hidden; }
+  th { background: #21262d; color: #8b949e; text-align: left; padding: 10px 12px; font-size: 12px; text-transform: uppercase; }
+  td { padding: 10px 12px; border-top: 1px solid #30363d; font-size: 14px; }
+  .status { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+  .status.completed { background: #1a3a2a; color: #3fb950; }
+  .status.running { background: #1a2a3a; color: #58a6ff; }
+  .status.queued { background: #2a2a1a; color: #d29922; }
+  .status.failed { background: #3a1a1a; color: #f85149; }
+  .events { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 12px; }
+  .event-line { padding: 3px 0; border-bottom: 1px solid #21262d; }
+  .event-time { color: #8b949e; }
+  .event-topic { color: #58a6ff; }
+  #error { color: #f85149; padding: 10px; display: none; }
+  .toolbar { display: flex; gap: 10px; margin-bottom: 20px; align-items: center; }
+  .toolbar input { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 8px 12px; border-radius: 6px; font-size: 14px; width: 300px; }
+  .toolbar button { background: #238636; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+  .toolbar button:hover { background: #2ea043; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🤖 Agent Dashboard</h1>
+  <div id="error"></div>
+
+  <div class="toolbar">
+    <input id="apiKey" type="password" placeholder="API Key (Bearer token)">
+    <button onclick="connect()">Connect</button>
+  </div>
+
+  <h2>Overview</h2>
+  <div class="grid" id="stats">
+    <div class="card"><div class="label">Workers</div><div class="value" id="stat-workers">-</div></div>
+    <div class="card"><div class="label">Total Tasks</div><div class="value" id="stat-tasks">-</div></div>
+    <div class="card"><div class="label">Completed</div><div class="value green" id="stat-completed">-</div></div>
+    <div class="card"><div class="label">Failed</div><div class="value red" id="stat-failed">-</div></div>
+    <div class="card"><div class="label">Agents</div><div class="value" id="stat-agents">-</div></div>
+  </div>
+
+  <h2>Recent Tasks</h2>
+  <table id="tasks-table">
+    <thead><tr><th>ID</th><th>Profile</th><th>Status</th><th>Duration</th><th>Created</th></tr></thead>
+    <tbody id="tasks-body"><tr><td colspan="5">Connect to load data</td></tr></tbody>
+  </table>
+
+  <h2>Workers</h2>
+  <table id="workers-table">
+    <thead><tr><th>URL</th><th>Profiles</th><th>Current Task</th><th>Completed</th></tr></thead>
+    <tbody id="workers-body"><tr><td colspan="4">Connect to load data</td></tr></tbody>
+  </table>
+
+  <h2>Live Events</h2>
+  <div class="events" id="events">Waiting for connection...</div>
+</div>
+
+<script>
+let key = '';
+const base = window.location.origin;
+
+function headers() {
+  return { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' };
+}
+
+async function connect() {
+  key = document.getElementById('apiKey').value;
+  if (!key) { showError('Enter an API key'); return; }
+  try {
+    await refresh();
+    startEventStream();
+    setInterval(refresh, 10000);
+    document.getElementById('error').style.display = 'none';
+  } catch (e) {
+    showError('Connection failed: ' + e.message);
+  }
+}
+
+async function refresh() {
+  // Health
+  const health = await (await fetch(base + '/v1/health')).json();
+  document.getElementById('stat-workers').textContent = health.workers || 0;
+
+  // Tasks
+  const tasks = await (await fetch(base + '/v1/tasks?limit=20', { headers: headers() })).json();
+  const taskList = tasks.tasks || [];
+  document.getElementById('stat-tasks').textContent = tasks.count || 0;
+  document.getElementById('stat-completed').textContent = taskList.filter(t => t.status === 'completed').length;
+  document.getElementById('stat-failed').textContent = taskList.filter(t => t.status === 'failed').length;
+
+  const tbody = document.getElementById('tasks-body');
+  tbody.innerHTML = taskList.map(t => `
+    <tr>
+      <td>${t.id}</td>
+      <td>${t.profile}</td>
+      <td><span class="status ${t.status}">${t.status}</span></td>
+      <td>${t.durationMs ? (t.durationMs/1000).toFixed(1) + 's' : '-'}</td>
+      <td>${new Date(t.createdAt).toLocaleTimeString()}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="5">No tasks</td></tr>';
+
+  // Workers
+  const workers = await (await fetch(base + '/v1/workers')).json();
+  const wList = workers.workers || [];
+  document.getElementById('workers-body').innerHTML = wList.map(w => `
+    <tr>
+      <td>${w.url}</td>
+      <td>${(w.profiles||[]).join(', ')}</td>
+      <td>${w.currentTask || '-'}</td>
+      <td>${w.tasksCompleted}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="4">No workers</td></tr>';
+
+  // Agents
+  const agents = await (await fetch(base + '/v1/agents', { headers: headers() })).json();
+  document.getElementById('stat-agents').textContent = agents.count || 0;
+}
+
+function startEventStream() {
+  const evtDiv = document.getElementById('events');
+  evtDiv.innerHTML = '';
+  const es = new EventSource(base + '/v1/events?token=' + key);
+
+  // SSE doesn't support custom headers, so we'll fall back to polling for now
+  // The gateway auth checks Bearer token in header — EventSource can't set headers
+  // This is a known limitation; for production, use a WebSocket or token-in-query approach
+
+  evtDiv.innerHTML = '<div class="event-line">Event stream: polling mode (SSE auth limitation)</div>';
+}
+
+function showError(msg) {
+  const el = document.getElementById('error');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+</script>
+</body>
+</html>

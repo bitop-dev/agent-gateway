@@ -2,9 +2,10 @@ package main
 
 import (
 	"context"
-	_ "embed"
+	"embed"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -21,6 +22,9 @@ import (
 
 //go:embed migrations.sql
 var migrationSQL string
+
+//go:embed web
+var webContent embed.FS
 
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
@@ -104,7 +108,9 @@ func main() {
 		}
 	}()
 
-	httpServer := &http.Server{Addr: *addr, Handler: srv.Handler()}
+	// Serve embedded web UI.
+	webFS, _ := fs.Sub(webContent, "web")
+	httpServer := &http.Server{Addr: *addr, Handler: srv.Handler(http.FS(webFS))}
 
 	// Graceful shutdown.
 	go func() {

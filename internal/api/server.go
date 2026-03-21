@@ -34,8 +34,13 @@ func NewServer(database *db.DB, rtr *router.Router, bus *events.Bus, registryURL
 	}
 }
 
-func (s *Server) Handler() http.Handler {
+func (s *Server) Handler(webFS http.FileSystem) http.Handler {
 	mux := http.NewServeMux()
+
+	// Dashboard UI
+	if webFS != nil {
+		mux.Handle("/", http.FileServer(webFS))
+	}
 
 	// Health (no auth)
 	mux.HandleFunc("/v1/health", s.handleHealth)
