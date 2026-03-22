@@ -219,6 +219,7 @@ func (r *Router) callWorker(ctx context.Context, workerURL string, task *db.Task
 	body := map[string]any{
 		"profile": task.Profile,
 		"task":    task.Task,
+		"taskId":  task.ID,
 	}
 	if len(task.Context) > 0 {
 		body["context"] = task.Context

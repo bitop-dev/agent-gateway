@@ -17,16 +17,18 @@ import (
 )
 
 type Server struct {
-	DB          *db.DB
-	Router      *router.Router
-	Events      *events.Bus
-	RegistryURL string
-	AdminKey    string
+	DB           *db.DB
+	Router       *router.Router
+	Events       *events.Bus
+	TaskEvents   *db.TaskEventBuffer
+	RegistryURL  string
+	AdminKey     string
 }
 
 func NewServer(database *db.DB, rtr *router.Router, bus *events.Bus, registryURL, adminKey string) *Server {
 	return &Server{
 		DB:          database,
+		TaskEvents:  db.NewTaskEventBuffer(),
 		Router:      rtr,
 		Events:      bus,
 		RegistryURL: registryURL,
@@ -51,7 +53,7 @@ func (s *Server) Handler(webFS http.FileSystem) http.Handler {
 	// Authenticated endpoints
 	mux.HandleFunc("/v1/tasks", s.requireAuth(s.handleTasks, "tasks:write", "tasks:read"))
 	mux.HandleFunc("/v1/tasks/parallel", s.requireAuth(s.handleParallelTasks, "tasks:write"))
-	mux.HandleFunc("/v1/tasks/", s.requireAuth(s.handleTaskByID, "tasks:read"))
+	mux.HandleFunc("/v1/tasks/", s.handleTaskRoutes) // handles both task detail and task events
 	mux.HandleFunc("/v1/agents", s.requireAuth(s.handleAgents, "tasks:read"))
 
 	// Admin endpoints
@@ -1018,6 +1020,57 @@ func expandTemplate(tmpl string, payload map[string]any) string {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+// handleTaskRoutes dispatches /v1/tasks/{id} and /v1/tasks/{id}/events
+func (s *Server) handleTaskRoutes(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/v1/tasks/")
+	parts := strings.SplitN(path, "/", 2)
+
+	if len(parts) == 2 && parts[1] == "events" {
+		s.handleTaskEvents(w, r, parts[0])
+		return
+	}
+	// Regular task detail — requires auth
+	s.requireAuth(s.handleTaskByID, "tasks:read")(w, r)
+}
+
+// handleTaskEvents handles POST (worker pushes) and GET (client reads) task events
+func (s *Server) handleTaskEvents(w http.ResponseWriter, r *http.Request, taskID string) {
+	switch r.Method {
+	case http.MethodPost:
+		// Worker pushes events — no auth required
+		var event db.TaskEvent
+		if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		s.TaskEvents.Push(taskID, event)
+		w.WriteHeader(http.StatusOK)
+
+	case http.MethodGet:
+		// Client reads events
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if token == "" {
+			token = r.URL.Query().Get("token")
+		}
+		if s.AdminKey != "" && token != s.AdminKey {
+			if token == "" {
+				writeError(w, http.StatusUnauthorized, "authorization required")
+				return
+			}
+			keyHash := db.HashKey(token)
+			if _, err := s.DB.ValidateAPIKey(r.Context(), keyHash); err != nil {
+				writeError(w, http.StatusUnauthorized, "invalid key")
+				return
+			}
+		}
+		evts := s.TaskEvents.Get(taskID)
+		writeJSON(w, http.StatusOK, map[string]any{"events": evts, "count": len(evts)})
+
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
