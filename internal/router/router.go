@@ -97,7 +97,12 @@ func (r *Router) Dispatch(ctx context.Context, task *db.Task) (*db.Task, error) 
 
 		// Success.
 		totalDuration := int(time.Since(totalStart).Milliseconds())
-		r.DB.UpdateTaskCompleted(ctx, task.ID, result.Output, result.Model, 0, totalDuration, result.InputTokens, result.OutputTokens)
+		// Convert tool steps
+		var dbSteps []db.ToolStep
+		for _, s := range result.ToolSteps {
+			dbSteps = append(dbSteps, db.ToolStep{Tool: s.Tool, Result: s.Result, Error: s.Error})
+		}
+		r.DB.UpdateTaskCompleted(ctx, task.ID, result.Output, result.Model, len(result.ToolSteps), totalDuration, result.InputTokens, result.OutputTokens, dbSteps)
 
 		// Record cost if worker reported token usage.
 		if result.InputTokens > 0 || result.OutputTokens > 0 {
@@ -191,14 +196,23 @@ func isTransientError(err error) bool {
 	return false
 }
 
+type toolStep struct {
+	Tool      string `json:"tool"`
+	Arguments string `json:"arguments,omitempty"`
+	Result    string `json:"result,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Duration  int    `json:"durationMs,omitempty"`
+}
+
 type workerResponse struct {
-	Status       string  `json:"status"`
-	Output       string  `json:"output"`
-	Error        string  `json:"error"`
-	Duration     float64 `json:"duration"`
-	Model        string  `json:"model"`
-	InputTokens  int     `json:"inputTokens"`
-	OutputTokens int     `json:"outputTokens"`
+	Status       string     `json:"status"`
+	Output       string     `json:"output"`
+	Error        string     `json:"error"`
+	Duration     float64    `json:"duration"`
+	Model        string     `json:"model"`
+	InputTokens  int        `json:"inputTokens"`
+	OutputTokens int        `json:"outputTokens"`
+	ToolSteps    []toolStep `json:"toolSteps,omitempty"`
 }
 
 func (r *Router) callWorker(ctx context.Context, workerURL string, task *db.Task) (*workerResponse, error) {
